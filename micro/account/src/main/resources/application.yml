@@ -87,6 +87,11 @@ app:
     audience: ${COGNITO_AUDIENCE:}
     hashSalt: ${SECURITY_HASH_SALT:change-me}
     channel: ${SECURITY_CHANNEL:web}
+    service-token:
+      url: ${COGNITO_TOKEN_URL}
+      client-id: ${COGNITO_CLIENT_ID}
+      client-secret: ${COGNITO_CLIENT_SECRET}
+      scope: ${COGNITO_SERVICE_SCOPE}
 
 clients:
   ledger-target: "${LEDGER_GRPC_TARGET:ledger:9093}"

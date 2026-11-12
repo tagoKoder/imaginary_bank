@@ -161,13 +161,13 @@ public final class GrpcValidation {
   // -----------------------------
   // Money / doubles (NaN/Inf/overflow)
   // -----------------------------
-  public static BigDecimal requireNonNegativeMoney(double v, String field) {
-    if (Double.isNaN(v) || Double.isInfinite(v)) throw invalid(field + " invalid number");
-    if (v < 0d) throw invalid(field + " must be >= 0");
+  public static BigDecimal requireNonNegativeMoney(String v, String field) {
+    if (Double.isNaN(Double.parseDouble(v)) || Double.isInfinite(Double.parseDouble(v))) throw invalid(field + " invalid number");
+    if (Double.parseDouble(v) < 0d) throw invalid(field + " must be >= 0");
     // límite DoS/overflow (ajústalo si quieres)
-    if (v > 1_000_000_000d) throw invalid(field + " too large");
+    if (Double.parseDouble(v) > 1_000_000_000d) throw invalid(field + " too large");
     // normaliza a 2 decimales para evitar problemas de precisión
-    return BigDecimal.valueOf(v).setScale(2, RoundingMode.HALF_UP);
+    return new BigDecimal(v).setScale(2, RoundingMode.HALF_UP);
   }
 
   // -----------------------------

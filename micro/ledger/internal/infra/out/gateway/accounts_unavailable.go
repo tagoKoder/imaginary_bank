@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 
-	accountsv1 "github.com/tagoKoder/ledger/internal/genproto/bank/accounts/v1"
+	accountsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/accounts/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

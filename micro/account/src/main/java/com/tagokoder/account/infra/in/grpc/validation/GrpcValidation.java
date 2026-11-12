@@ -153,11 +153,11 @@ public final class GrpcValidation {
     // - fuerza max 2 decimales
     // - techo de magnitud (anti abuso/overflow downstream)
     // -----------------------------
-    public static BigDecimal requirePositiveMoney(double amount, String field) {
-        if (Double.isNaN(amount) || Double.isInfinite(amount)) throw invalid(field + " invalid");
-        if (amount <= 0d) throw invalid(field + " must be > 0");
+    public static BigDecimal requirePositiveMoney(String amount, String field) {
+        if (Double.isNaN(Double.parseDouble(amount)) || Double.isInfinite(Double.parseDouble(amount))) throw invalid(field + " invalid");
+        if (Double.parseDouble(amount) <= 0d) throw invalid(field + " must be > 0");
 
-        BigDecimal bd = BigDecimal.valueOf(amount);
+        BigDecimal bd = BigDecimal.valueOf(Double.parseDouble(amount));
         // max 2 decimales sin redondear (evita “1.99999997”)
         try {
             bd = bd.setScale(2, RoundingMode.UNNECESSARY);
@@ -172,9 +172,9 @@ public final class GrpcValidation {
         return bd;
     }
 
-    public static BigDecimal optionalNonNegativeMoney(DoubleValue v, String field) {
+    public static BigDecimal optionalNonNegativeMoney(String v, String field) {
         if (v == null) return null;
-        double raw = v.getValue();
+        double raw = Double.parseDouble(v);
         if (Double.isNaN(raw) || Double.isInfinite(raw)) throw invalid(field + " invalid");
         if (raw < 0d) throw invalid(field + " must be >= 0");
 

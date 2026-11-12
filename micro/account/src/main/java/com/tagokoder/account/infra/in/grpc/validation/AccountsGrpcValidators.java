@@ -70,8 +70,8 @@ public final class AccountsGrpcValidators {
     boolean hasAny = req.hasDailyOut() || req.hasDailyIn();
     if (!hasAny) throw invalid("At least one of daily_out or daily_in is required");
 
-    var dailyOut = optionalNonNegativeMoney(req.hasDailyOut() ? req.getDailyOut() : null, "daily_out");
-    var dailyIn  = optionalNonNegativeMoney(req.hasDailyIn()  ? req.getDailyIn()  : null, "daily_in");
+    var dailyOut = optionalNonNegativeMoney(req.hasDailyOut() ? req.getDailyOut().getValue() : null, "daily_out");
+    var dailyIn  = optionalNonNegativeMoney(req.hasDailyIn()  ? req.getDailyIn() .getValue() : null, "daily_in");
 
     return new PatchLimitsIn(key, new PatchAccountLimitsUseCase.Command(accountId, dailyOut, dailyIn));
   }

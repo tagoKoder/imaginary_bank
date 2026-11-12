@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tagoKoder/ledger/internal/infra/config"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -33,6 +35,9 @@ type Claims struct {
 	Issuer    string
 	Audience  []string
 	ExpiresAt time.Time
+	TokenUse  string
+	ClientID  string
+	Scopes    []string
 }
 
 type Validator struct {
@@ -43,19 +48,23 @@ type Validator struct {
 	HTTPClient *http.Client
 	CacheTTL   time.Duration
 
-	mu        sync.Mutex
-	cachedAt  time.Time
-	keysByKID map[string]*rsa.PublicKey
+	mu             sync.Mutex
+	cachedAt       time.Time
+	keysByKID      map[string]*rsa.PublicKey
+	allowedClients []string
+	allowedScopes  []string
 }
 
-func New(issuer, audience, jwksURL string) *Validator {
+func New(issuer, audience, jwksURL string, cfg *config.Config) *Validator {
 	return &Validator{
-		Issuer:     issuer,
-		Audience:   audience,
-		JWKSURL:    jwksURL,
-		HTTPClient: &http.Client{Timeout: 3 * time.Second},
-		CacheTTL:   10 * time.Minute,
-		keysByKID:  map[string]*rsa.PublicKey{},
+		Issuer:         issuer,
+		Audience:       audience,
+		JWKSURL:        jwksURL,
+		HTTPClient:     &http.Client{Timeout: 3 * time.Second},
+		CacheTTL:       10 * time.Minute,
+		keysByKID:      map[string]*rsa.PublicKey{},
+		allowedClients: cfg.LedgerSystemCreditClientIDs,
+		allowedScopes:  cfg.LedgerSystemCreditScope,
 	}
 }
 
@@ -107,11 +116,22 @@ func (v *Validator) ValidateToken(ctx context.Context, tokenStr string) (Claims,
 	}
 
 	exp := extractTime(mc["exp"])
-	if !exp.IsZero() && time.Now().UTC().After(exp) {
+	if exp.IsZero() || !time.Now().UTC().Before(exp) {
 		return Claims{}, ErrInvalidToken
 	}
 
 	sub, _ := mc["sub"].(string)
+	if strings.TrimSpace(sub) == "" {
+		return Claims{}, ErrInvalidToken
+	}
+
+	tokenUse, _ := mc["token_use"].(string)
+	clientID, _ := mc["client_id"].(string)
+
+	var scopes []string
+	if rawScope, ok := mc["scope"].(string); ok {
+		scopes = strings.Fields(rawScope)
+	}
 
 	roles := extractStringArray(mc["cognito:groups"])
 	// customer_id: soporta "custom:customer_id" y "customer_id"
@@ -137,6 +157,9 @@ func (v *Validator) ValidateToken(ctx context.Context, tokenStr string) (Claims,
 		Issuer:     iss,
 		Audience:   auds,
 		ExpiresAt:  exp,
+		TokenUse:   tokenUse,
+		ClientID:   clientID,
+		Scopes:     scopes,
 	}, nil
 }
 
@@ -311,4 +334,52 @@ func contains(xs []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func (v *Validator) ValidateServiceBearer(
+	ctx context.Context,
+	authzHeader string,
+) (Claims, error) {
+	claims, err := v.ValidateBearer(ctx, authzHeader)
+	if err != nil {
+		return Claims{}, err
+	}
+
+	// Solo se aceptan access tokens de Cognito.
+	if claims.TokenUse != "access" {
+		return Claims{}, ErrInvalidToken
+	}
+
+	// Debe estar configurado el cliente de servicio autorizado.
+	allowedClients := v.allowedClients
+
+	clientAllowed := false
+	for _, id := range allowedClients {
+		if strings.TrimSpace(id) != "" &&
+			strings.TrimSpace(id) == claims.ClientID {
+			clientAllowed = true
+			break
+		}
+	}
+	if !clientAllowed {
+		return Claims{}, ErrInvalidToken
+	}
+
+	allowedScopes := v.allowedScopes
+	if len(allowedScopes) == 0 {
+		return Claims{}, ErrInvalidToken
+	}
+
+	scopeAllowed := false
+	for _, scope := range claims.Scopes {
+		if contains(allowedScopes, scope) {
+			scopeAllowed = true
+			break
+		}
+	}
+	if !scopeAllowed {
+		return Claims{}, ErrInvalidToken
+	}
+
+	return claims, nil
 }

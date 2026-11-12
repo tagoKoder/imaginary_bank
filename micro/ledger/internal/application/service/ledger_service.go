@@ -10,12 +10,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	accountsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/accounts/v1"
 	"github.com/tagoKoder/ledger/internal/application/uow"
-	"github.com/tagoKoder/ledger/internal/domain/model"
 	dm "github.com/tagoKoder/ledger/internal/domain/model"
 	in "github.com/tagoKoder/ledger/internal/domain/port/in"
 	out "github.com/tagoKoder/ledger/internal/domain/port/out"
-	accountsv1 "github.com/tagoKoder/ledger/internal/genproto/bank/accounts/v1"
 	authctx "github.com/tagoKoder/ledger/internal/infra/security/context"
 )
 
@@ -39,12 +38,6 @@ func (s *ledgerAppService) CreditAccount(ctx context.Context, cmd in.CreditAccou
 	amt, err := decimal.NewFromString(cmd.Amount)
 	if err != nil {
 		return nil, err
-	}
-
-	af, exact := amt.Float64()
-	if !exact {
-		// ideal migrar proto a
-		return nil, model.ErrAmountNotExact
 	}
 
 	// Idempotencia
@@ -72,7 +65,7 @@ func (s *ledgerAppService) CreditAccount(ctx context.Context, cmd in.CreditAccou
 		SourceAccountId:      cmd.AccountID.String(),
 		DestinationAccountId: cmd.AccountID.String(),
 		Currency:             cmd.Currency,
-		Amount:               af,
+		Amount:               amt.StringFixed(6),
 	})
 	if err != nil {
 		return nil, err
@@ -133,6 +126,14 @@ func (s *ledgerAppService) CreditAccount(ctx context.Context, cmd in.CreditAccou
 			"currency":    cmd.Currency,
 			"amount":      amt.StringFixed(6),
 			"occurred_at": now.Format(time.RFC3339Nano),
+			"postings": []map[string]string{
+				{
+					"account_id":  cmd.AccountID.String(),
+					"d_ledger":    amt.StringFixed(6),
+					"d_available": amt.StringFixed(6),
+					"d_hold":      "0.000000",
+				},
+			},
 		}
 		pj, _ := json.Marshal(payload)
 
@@ -184,10 +185,6 @@ func (s *ledgerAppService) CreditAccountSystem(ctx context.Context, cmd in.Credi
 	if err != nil {
 		return nil, err
 	}
-	af, exact := amt.Float64()
-	if !exact {
-		return nil, model.ErrAmountNotExact
-	}
 
 	// Idempotencia (igual que CreditAccount)
 	var cachedJSON string
@@ -214,7 +211,7 @@ func (s *ledgerAppService) CreditAccountSystem(ctx context.Context, cmd in.Credi
 		SourceAccountId:      cmd.AccountID.String(),
 		DestinationAccountId: cmd.AccountID.String(),
 		Currency:             cmd.Currency,
-		Amount:               af,
+		Amount:               amt.StringFixed(6),
 	})
 	if err != nil {
 		return nil, err
@@ -269,12 +266,18 @@ func (s *ledgerAppService) CreditAccountSystem(ctx context.Context, cmd in.Credi
 		// outbox ledger.posted
 		payload := map[string]any{
 			"journal_id":   journalID.String(),
-			"account_id":   cmd.AccountID.String(),
 			"currency":     cmd.Currency,
-			"amount":       amt.StringFixed(6),
 			"reason":       cmd.Reason,
 			"external_ref": cmd.ExternalRef,
 			"occurred_at":  now.Format(time.RFC3339Nano),
+			"postings": []map[string]string{
+				{
+					"account_id":  cmd.AccountID.String(),
+					"d_ledger":    amt.StringFixed(6),
+					"d_available": amt.StringFixed(6),
+					"d_hold":      "0.000000",
+				},
+			},
 		}
 		pj, _ := json.Marshal(payload)
 

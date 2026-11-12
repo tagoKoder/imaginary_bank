@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync/atomic"
 
+	accountsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/accounts/v1"
 	out "github.com/tagoKoder/ledger/internal/domain/port/out"
-	accountsv1 "github.com/tagoKoder/ledger/internal/genproto/bank/accounts/v1"
 )
 
 // OJO: atomic.Value exige mismo tipo dinámico siempre.

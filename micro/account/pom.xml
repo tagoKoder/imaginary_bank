@@ -26,9 +26,21 @@
     <protobuf.version>3.25.3</protobuf.version>
     <grpc.version>1.66.0</grpc.version>
 
-    <!-- Necesario para os.detected.classifier -->
-    <os-maven-plugin.version>1.7.1</os-maven-plugin.version>
+    <bank-contracts.version>0.3.0</bank-contracts.version>
   </properties>
+  <repositories>
+      <repository>
+          <id>github</id>
+          <name>GitHub Packages - bank-contracts</name>
+          <url>https://maven.pkg.github.com/tagokoder/bank-contracts</url>
+          <releases>
+              <enabled>true</enabled>
+          </releases>
+          <snapshots>
+              <enabled>false</enabled>
+          </snapshots>
+      </repository>
+  </repositories>
 
 <dependencyManagement>
   <dependencies>
@@ -177,7 +189,12 @@
 </dependency>
 
 
-
+  <!-- Centralized gRPC contracts -->
+    <dependency>
+        <groupId>com.tagokoder</groupId>
+        <artifactId>bank-contracts-java</artifactId>
+        <version>${bank-contracts.version}</version>
+    </dependency>
   </dependencies>
 
 
@@ -191,13 +208,6 @@
     </resources>
     <plugins>
 
-      <!-- Detecta OS para ${os.detected.classifier} -->
-      <plugin>
-        <groupId>kr.motd.maven</groupId>
-        <artifactId>os-maven-plugin</artifactId>
-        <version>${os-maven-plugin.version}</version>
-        <extensions>true</extensions>
-      </plugin>
 
       <!-- MapStruct + Lombok -->
       <plugin>
@@ -226,50 +236,6 @@
         </configuration>
       </plugin>
 
-      <!-- Protobuf + gRPC codegen -->
-      <plugin>
-        <groupId>org.xolstice.maven.plugins</groupId>
-        <artifactId>protobuf-maven-plugin</artifactId>
-        <version>0.6.1</version>
-
-        <configuration>
-          <!-- IMPORTANTE: asegura que compila desde src/main/proto -->
-          <protoSourceRoot>${project.basedir}/src/main/proto</protoSourceRoot>
-
-          <protocArtifact>
-            com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}
-          </protocArtifact>
-
-          <pluginId>grpc-java</pluginId>
-          <pluginArtifact>
-            io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:${os.detected.classifier}
-          </pluginArtifact>
-
-          <!-- ESTO SOLUCIONA google/protobuf/timestamp.proto, wrappers.proto -->
-          <protocDependencies>
-            <protocDependency>
-              com.google.protobuf:protobuf-java:${protobuf.version}
-            </protocDependency>
-          </protocDependencies>
-
-          <!-- Para compilar solo accounts.proto (si quieres) -->
-          <includes>
-            <include>bank/identity/v1/identity.proto</include>
-            <include>bank/accounts/v1/accounts.proto</include>
-            <include>bank/ledgerpayments/v1/ledgerpayments.proto</include>
-          </includes>
-        </configuration>
-
-        <executions>
-          <execution>
-            <goals>
-              <goal>compile</goal>
-              <goal>compile-custom</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
@@ -285,46 +251,4 @@
 
     </plugins>
   </build>
-
- 
-<profiles>
-  <profile>
-    <id>windows-protos</id>
-    <activation>
-      <os>
-        <family>Windows</family>
-      </os>
-    </activation>
-
-    <build>
-      <plugins>
-        <!-- sync-protos SOLO en Windows -->
-        <plugin>
-          <groupId>org.codehaus.mojo</groupId>
-          <artifactId>exec-maven-plugin</artifactId>
-          <version>3.3.0</version>
-          <executions>
-            <execution>
-              <id>sync-protos</id>
-              <phase>generate-sources</phase>
-              <goals>
-                <goal>exec</goal>
-              </goals>
-              <configuration>
-                <executable>powershell</executable>
-                <arguments>
-                  <argument>-ExecutionPolicy</argument>
-                  <argument>Bypass</argument>
-                  <argument>-File</argument>
-                  <!-- IMPORTANTE: path portable con / -->
-                  <argument>${project.basedir}/contracts/sync-protos.ps1</argument>
-                </arguments>
-              </configuration>
-            </execution>
-          </executions>
-        </plugin>
-      </plugins>
-    </build>
-  </profile>
-</profiles>
 </project>

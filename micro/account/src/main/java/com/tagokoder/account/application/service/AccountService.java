@@ -58,8 +58,23 @@ public class AccountService implements
     @Override
     @Transactional
     public CreateAccountUseCase.Result create(CreateAccountUseCase.Command c) {
+        if (c == null || c.customerId() == null) throw new IllegalArgumentException("customerId required");
+        if (!"USD".equalsIgnoreCase(c.currency())) throw new IllegalArgumentException("Only USD supported for now");
+        if (!"checking".equalsIgnoreCase(c.productType())
+                && !"savings".equalsIgnoreCase(c.productType())) {
+            throw new IllegalArgumentException("Unsupported product type");
+        }
         if (!accountRepo.existsCustomer(c.customerId())) {
             throw new IllegalArgumentException("Customer not found");
+        }
+        var existing = accountRepo.findByCustomerId(c.customerId());
+        if (!existing.isEmpty()) {
+            Account account = existing.get(0);
+            if (!c.currency().equalsIgnoreCase(account.getCurrency()) ||
+                !c.productType().equalsIgnoreCase(account.getProductType())) {
+                throw new IllegalStateException("Customer already has a different account");
+            }
+            return new CreateAccountUseCase.Result(account.getId(), account.getAccountNumber());
         }
 
         Account a = new Account();
@@ -305,10 +320,6 @@ public class AccountService implements
         return new BatchGetAccountSummariesUseCase.Result(ok, missing);
     }
 
-    @Transactional
-    public void applyOpeningBonus(UUID accountId, BigDecimal amount) {
-        balanceRepo.applyCredit(accountId, amount);
-    }
 
     private static String safe(String s) {
         return s == null ? "" : s;

@@ -3,8 +3,8 @@ package validation
 import (
 	"time"
 
+	ledgerpb "github.com/tagoKoder/bank-contracts/gen/go/bank/ledgerpayments/v1"
 	in "github.com/tagoKoder/ledger/internal/domain/port/in"
-	ledgerpb "github.com/tagoKoder/ledger/internal/genproto/bank/ledgerpayments/v1"
 )
 
 func ToCreditAccountCommand(req *ledgerpb.CreditAccountRequest) (in.CreditAccountCommand, error) {

@@ -10,7 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 import com.tagokoder.account.application.AccountNumberFmt;
 import com.tagokoder.account.domain.port.in.CreateAccountUseCase;
 import com.tagokoder.account.domain.port.in.OpenAccountWithOpeningBonusUseCase;
-import com.tagokoder.account.domain.port.out.AccountBalanceRepositoryPort;
 import com.tagokoder.account.domain.port.out.AccountRepositoryPort;
 import com.tagokoder.account.domain.port.out.LedgerClientPort;
 import com.tagokoder.account.domain.port.out.OpeningBonusRepositoryPort;
@@ -24,20 +23,17 @@ public class AccountOpeningService implements OpenAccountWithOpeningBonusUseCase
 
     private final CreateAccountUseCase createAccount;
     private final LedgerClientPort ledger;
-    private final AccountBalanceRepositoryPort balances;
     private final OpeningBonusRepositoryPort openingBonusRepo;
     private final AccountRepositoryPort accountRepo;
 
     public AccountOpeningService(
             CreateAccountUseCase createAccount,
             LedgerClientPort ledger,
-            AccountBalanceRepositoryPort balances,
             OpeningBonusRepositoryPort openingBonusRepo,
             AccountRepositoryPort accountRepo
     ) {
         this.createAccount = createAccount;
         this.ledger = ledger;
-        this.balances = balances;
         this.openingBonusRepo = openingBonusRepo;
         this.accountRepo = accountRepo;
     }
@@ -47,10 +43,15 @@ public class AccountOpeningService implements OpenAccountWithOpeningBonusUseCase
 
     UUID customerId = c.customerId();
     String currency = c.currency();
-    String initiatedBy = (c.initiatedBy() == null || c.initiatedBy().isBlank()) ? "system" : c.initiatedBy();
 
     String baseKey = normalizeKey(c.idempotencyKey(), customerId, c.productType(), currency);
     String bonusKey = baseKey + ":opening_bonus";
+    // Una promoción por customerId, aunque lleguen claves distintas.
+    var grantByCustomer = openingBonusRepo.findByCustomerAndBenefit(
+        customerId, OpeningBonusRepositoryPort.REGISTRATION_BONUS);
+    if (grantByCustomer.isPresent()) {
+        bonusKey = grantByCustomer.get().idempotencyKey();
+    }
 
     // 0) Leer estado actual
     var ex = openingBonusRepo.findByKey(bonusKey);
@@ -65,11 +66,18 @@ public class AccountOpeningService implements OpenAccountWithOpeningBonusUseCase
 
     // 1) Si no existe, intentar adquirir (insert PENDING)
     if (ex.isEmpty()) {
-        openingBonusRepo.tryAcquire(bonusKey, OPENING_BONUS, currency);
-        ex = openingBonusRepo.findByKey(bonusKey);
+        openingBonusRepo.tryAcquire(bonusKey, customerId,
+            OpeningBonusRepositoryPort.REGISTRATION_BONUS, OPENING_BONUS, currency);
+        ex = openingBonusRepo.findByCustomerAndBenefit(customerId,
+            OpeningBonusRepositoryPort.REGISTRATION_BONUS);
+        if (ex.isPresent()) bonusKey = ex.get().idempotencyKey();
     }
 
     var now = ex.orElseThrow(() -> new IllegalStateException("opening bonus grant missing"));
+    if (!customerId.equals(now.customerId()) || !"USD".equals(currency)
+            || now.amount().compareTo(OPENING_BONUS) != 0) {
+        throw new IllegalStateException("opening bonus grant conflicts with request");
+    }
 
     // 2) Determinar accountId
     UUID accountId = now.accountId();
@@ -84,7 +92,12 @@ public class AccountOpeningService implements OpenAccountWithOpeningBonusUseCase
         accountNumber = AccountNumberFmt.fmt12(created.accountNumber());
 
         // importante: anclar account_id para reintentos (evita doble cuenta si falla después)
-        openingBonusRepo.attachAccountIfEmpty(bonusKey, accountId);
+        if (!openingBonusRepo.attachAccountIfEmpty(bonusKey, accountId)) {
+            var existing = openingBonusRepo.findByKey(bonusKey).orElseThrow();
+            if (!accountId.equals(existing.accountId())) {
+                throw new IllegalStateException("Concurrent opening conflict; retry with same key");
+            }
+        }
     } else {
         accountNumber = accountRepo.findById(accountId)
             .map(a -> AccountNumberFmt.fmt12(a.getAccountNumber()))
@@ -103,11 +116,15 @@ public class AccountOpeningService implements OpenAccountWithOpeningBonusUseCase
 
     // 4) Completar PENDING→COMPLETED (solo 1 gana)
     boolean transitioned = openingBonusRepo.completeIfPending(bonusKey, accountId, journalId);
-
-    // 5) Aplicar balance materializado SOLO si esta llamada completó
-    if (transitioned) {
-        balances.applyCredit(accountId, OPENING_BONUS);
+    if (!transitioned) {
+        var grant = openingBonusRepo.findByKey(bonusKey).orElseThrow();
+        if (grant.status() != OpeningBonusRepositoryPort.Status.COMPLETED
+                || !accountId.equals(grant.accountId())
+                || !journalId.equals(grant.journalId())) {
+            throw new IllegalStateException("Bonus completion conflict");
+        }
     }
+    // El saldo se actualizara solo con eventos contables en la Fase 4.
 
     return new Result(accountId, accountNumber, journalId, "opened");
     }

@@ -80,9 +80,9 @@ public class AccountsGrpcService extends AccountsServiceGrpc.AccountsServiceImpl
         .setOpenedAt(toTimestamp(a.openedAt()))
         .setUpdatedAt(toTimestamp(a.updatedAt()))
         .setBalances(AccountBalances.newBuilder()
-                .setLedger(GrpcMoney.dbl(a.balances().ledger()))
-                .setAvailable(GrpcMoney.dbl(a.balances().available()))
-                .setHold(GrpcMoney.dbl(a.balances().hold()))
+                .setLedger(GrpcMoney.str(a.balances().ledger()))
+                .setAvailable(GrpcMoney.str(a.balances().available()))
+                .setHold(GrpcMoney.str(a.balances().hold()))
                 .build());
         out.addAccounts(view.build());
         });
@@ -150,9 +150,9 @@ public class AccountsGrpcService extends AccountsServiceGrpc.AccountsServiceImpl
             responseObserver.onNext(GetAccountBalancesResponse.newBuilder()
             .setAccountId(res.accountId().toString())
             .setBalances(AccountBalances.newBuilder()
-            .setLedger(GrpcMoney.dbl(res.ledger()))
-            .setAvailable(GrpcMoney.dbl(res.available()))
-            .setHold(GrpcMoney.dbl(res.hold()))
+            .setLedger(GrpcMoney.str(res.ledger()))
+            .setAvailable(GrpcMoney.str(res.available()))
+            .setHold(GrpcMoney.str(res.hold()))
             .build())
             .build());
             responseObserver.onCompleted();
@@ -168,8 +168,8 @@ public class AccountsGrpcService extends AccountsServiceGrpc.AccountsServiceImpl
                 var res = cached.get();
                 responseObserver.onNext(PatchAccountLimitsResponse.newBuilder()
                 .setAccountId(res.accountId().toString())
-                .setDailyOut(GrpcMoney.dbl(res.dailyOut()))
-                .setDailyIn(GrpcMoney.dbl(res.dailyIn()))
+                .setDailyOut(GrpcMoney.str(res.dailyOut()))
+                .setDailyIn(GrpcMoney.str(res.dailyIn()))
                 .build());
                 responseObserver.onCompleted();
                 return;
@@ -183,8 +183,8 @@ public class AccountsGrpcService extends AccountsServiceGrpc.AccountsServiceImpl
 
                 responseObserver.onNext(PatchAccountLimitsResponse.newBuilder()
                 .setAccountId(res.accountId().toString())
-                .setDailyOut(GrpcMoney.dbl(res.dailyOut()))
-                .setDailyIn(GrpcMoney.dbl(res.dailyIn()))
+                .setDailyOut(GrpcMoney.str(res.dailyOut()))
+                .setDailyIn(GrpcMoney.str(res.dailyIn()))
                 .build());
                 responseObserver.onCompleted();
         }

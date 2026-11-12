@@ -68,14 +68,55 @@ func (i *Interceptor) Unary() grpc.UnaryServerInterceptor {
 			return nil, status.Error(codes.PermissionDenied, "forbidden")
 		}
 
-		// PUBLIC
+		// PUBLIC: solo para operaciones explícitamente públicas.
 		if def.Mode == authz.ModePublic {
 			return handler(ctx, req)
 		}
 
-		// token required for AUTHN_ONLY/AUTHZ
 		authzHdr := readIncoming(ctx, "authorization")
+
+		// SERVICE_ONLY: token de cliente OAuth autorizado y scope exacto.
+		if def.Mode == authz.ModeServiceOnly {
+			claims, err := i.jwt.ValidateServiceBearer(ctx, authzHdr)
+			if err != nil {
+				i.bestEffortAudit(
+					ctx,
+					info.FullMethod,
+					"DENY",
+					"service_authn_failed",
+					time.Now().UTC(),
+					nil,
+				)
+				return nil, status.Error(codes.PermissionDenied, "forbidden")
+			}
+
+			ctx = authctx.WithActionID(ctx, def.ActionID)
+			ctx = authctx.WithRouteTemplate(ctx, "CALL "+info.FullMethod)
+
+			resp, handlerErr := handler(ctx, req)
+
+			outcome := "ok"
+			if handlerErr != nil {
+				outcome = "handler_error"
+			}
+			i.bestEffortAudit(
+				ctx,
+				info.FullMethod,
+				"ALLOW",
+				outcome,
+				time.Now().UTC(),
+				map[string]any{
+					"client_id": claims.ClientID,
+					"action":    def.ActionID,
+				},
+			)
+
+			return resp, handlerErr
+		}
+
+		// Token de usuario requerido para AUTHN_ONLY/AUTHZ.
 		claims, err := i.jwt.ValidateBearer(ctx, authzHdr)
+
 		if err != nil {
 			i.bestEffortAudit(ctx, info.FullMethod, "DENY", "authn_failed", time.Now().UTC(), map[string]any{"err": err.Error()})
 			return nil, status.Error(codes.Unauthenticated, "unauthenticated")

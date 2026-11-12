@@ -5,29 +5,26 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface OpeningBonusRepositoryPort {
+    String REGISTRATION_BONUS = "REGISTRATION_BONUS";
+    enum Status { PENDING, COMPLETED }
 
-  enum Status { PENDING, COMPLETED }
+    record BonusGrant(
+        String idempotencyKey,
+        UUID customerId,
+        String benefitCode,
+        Status status,
+        UUID accountId,
+        String journalId,
+        BigDecimal amount,
+        String currency
+    ) {}
 
-  record BonusGrant(
-      String idempotencyKey,
-      Status status,
-      UUID accountId,      // nullable mientras PENDING
-      String journalId,    // nullable mientras PENDING
-      BigDecimal amount,
-      String currency
-  ) {}
+    Optional<BonusGrant> findByKey(String key);
+    Optional<BonusGrant> findByCustomerAndBenefit(UUID customerId, String benefitCode);
 
-  Optional<BonusGrant> findByKey(String idempotencyKey);
-
-  /** Inserta fila PENDING si no existe. True si el insert fue el que “ganó”. */
-  boolean tryAcquire(String key, BigDecimal amount, String currency);
-
-  /** Setea account_id solo si aún está null (para reintentos seguros). Retorna true si actualizó. */
-  boolean attachAccountIfEmpty(String key, UUID accountId);
-
-  /**
-   * Completa PENDING→COMPLETED. Retorna true si esta llamada hizo la transición.
-   * (Si ya estaba COMPLETED, retorna false)
-   */
-  boolean completeIfPending(String key, UUID accountId, String journalId);
+    // INSERT ... ON CONFLICT DO NOTHING: no deja transacción Postgres abortada.
+    boolean tryAcquire(String key, UUID customerId, String benefitCode,
+                       BigDecimal amount, String currency);
+    boolean attachAccountIfEmpty(String key, UUID accountId);
+    boolean completeIfPending(String key, UUID accountId, String journalId);
 }

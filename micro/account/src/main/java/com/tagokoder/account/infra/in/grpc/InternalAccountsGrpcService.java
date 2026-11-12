@@ -95,7 +95,7 @@ public class InternalAccountsGrpcService extends InternalAccountsServiceGrpc.Int
 
         responseObserver.onNext(ReserveHoldResponse.newBuilder()
         .setOk(res.ok())
-        .setNewHold(GrpcMoney.dbl(res.newHold()))
+        .setNewHold(GrpcMoney.str(res.newHold()))
         .build());
         responseObserver.onCompleted();
         }
@@ -108,7 +108,7 @@ public class InternalAccountsGrpcService extends InternalAccountsServiceGrpc.Int
 
         responseObserver.onNext(ReleaseHoldResponse.newBuilder()
         .setOk(res.ok())
-        .setNewHold(GrpcMoney.dbl(res.newHold()))
+        .setNewHold(GrpcMoney.str(res.newHold()))
         .build());
         responseObserver.onCompleted();
         }

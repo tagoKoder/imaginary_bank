@@ -2,8 +2,8 @@ package validation
 
 import (
 	"github.com/google/uuid"
+	ledgerpb "github.com/tagoKoder/bank-contracts/gen/go/bank/ledgerpayments/v1"
 	in "github.com/tagoKoder/ledger/internal/domain/port/in"
-	ledgerpb "github.com/tagoKoder/ledger/internal/genproto/bank/ledgerpayments/v1"
 )
 
 func ToPostPaymentCommand(req *ledgerpb.PostPaymentRequest) (in.PostPaymentCommand, error) {

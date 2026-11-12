@@ -9,12 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	accountsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/accounts/v1"
 	"github.com/tagoKoder/ledger/internal/application/uow"
 	"github.com/tagoKoder/ledger/internal/domain/model"
 	dm "github.com/tagoKoder/ledger/internal/domain/model"
 	in "github.com/tagoKoder/ledger/internal/domain/port/in"
 	out "github.com/tagoKoder/ledger/internal/domain/port/out"
-	accountsv1 "github.com/tagoKoder/ledger/internal/genproto/bank/accounts/v1"
 	authctx "github.com/tagoKoder/ledger/internal/infra/security/context"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -39,10 +39,6 @@ func (s *paymentService) PostPayment(ctx context.Context, cmd in.PostPaymentComm
 	amt, err := decimal.NewFromString(cmd.Amount)
 	if err != nil {
 		return nil, err
-	}
-	af, exact := amt.Float64()
-	if !exact {
-		return nil, model.ErrAmountNotExact
 	}
 
 	// 1) Idempotencia (read)
@@ -71,7 +67,7 @@ func (s *paymentService) PostPayment(ctx context.Context, cmd in.PostPaymentComm
 		SourceAccountId:      cmd.SourceAccountID.String(),
 		DestinationAccountId: cmd.DestinationAccount.String(),
 		Currency:             cmd.Currency,
-		Amount:               af,
+		Amount:               amt.StringFixed(6),
 	})
 	if err != nil {
 		return nil, err
@@ -104,7 +100,7 @@ func (s *paymentService) PostPayment(ctx context.Context, cmd in.PostPaymentComm
 		Id: cmd.SourceAccountID.String(),
 		Hold: &accountsv1.HoldRequest{
 			Currency: cmd.Currency,
-			Amount:   af,
+			Amount:   amt.StringFixed(6),
 			Reason:   wrapperspb.String("payment"),
 		},
 		HoldId:         paymentID.String(),
@@ -127,7 +123,7 @@ func (s *paymentService) PostPayment(ctx context.Context, cmd in.PostPaymentComm
 		Id: cmd.SourceAccountID.String(),
 		Hold: &accountsv1.HoldRequest{
 			Currency: cmd.Currency,
-			Amount:   af,
+			Amount:   amt.StringFixed(6),
 			Reason:   wrapperspb.String("payment-compensation"),
 		},
 		HoldId:         paymentID.String(),

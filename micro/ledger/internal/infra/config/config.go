@@ -56,6 +56,9 @@ type Config struct {
 	AccountsGrpcTimeout       time.Duration
 	AccountsGrpcTLSServerName string
 	AccountsGrpcTLSCaFile     string
+
+	LedgerSystemCreditClientIDs []string
+	LedgerSystemCreditScope     []string
 }
 
 func Load() Config {
@@ -92,11 +95,13 @@ func Load() Config {
 		InternalTokenHeader: getEnv("INTERNAL_TOKEN_HEADER", "X-Internal-Token"),
 
 		// Accounts (gRPC internal)
-		AccountsGrpcTarget:        getEnv("ACCOUNTS_GRPC_TARGET", "account:9092"),
-		AccountsGrpcInsecure:      getEnvBool("ACCOUNTS_GRPC_INSECURE", true),
-		AccountsGrpcTimeout:       getEnvDuration("ACCOUNTS_GRPC_TIMEOUT", 30*time.Second),
-		AccountsGrpcTLSServerName: getEnv("ACCOUNTS_GRPC_TLS_SERVER_NAME", "accounts"),
-		AccountsGrpcTLSCaFile:     getEnv("ACCOUNTS_GRPC_TLS_CA_FILE", ""),
+		AccountsGrpcTarget:          getEnv("ACCOUNTS_GRPC_TARGET", "account:9092"),
+		AccountsGrpcInsecure:        getEnvBool("ACCOUNTS_GRPC_INSECURE", true),
+		AccountsGrpcTimeout:         getEnvDuration("ACCOUNTS_GRPC_TIMEOUT", 30*time.Second),
+		AccountsGrpcTLSServerName:   getEnv("ACCOUNTS_GRPC_TLS_SERVER_NAME", "accounts"),
+		AccountsGrpcTLSCaFile:       getEnv("ACCOUNTS_GRPC_TLS_CA_FILE", ""),
+		LedgerSystemCreditClientIDs: splitCSV(getEnv("LEDGER_SYSTEM_CREDIT_CLIENT_IDS", "")),
+		LedgerSystemCreditScope:     splitCSV(getEnv("LEDGER_SYSTEM_CREDIT_SCOPE", "")),
 	}
 }
 

@@ -18,7 +18,7 @@ public class RouteAuthzRegistry {
       Map.entry("bank.identity.v1.OnboardingService/ConfirmRegistrationKyc",
           new RouteDef("identity.onboarding.confirm_kyc", true, AuthzMode.PUBLIC, T_REGISTRATION_ID)),
       Map.entry("bank.identity.v1.OnboardingService/ActivateRegistration",
-          new RouteDef("identity.onboarding.activate_registration", true, AuthzMode.PUBLIC, T_REGISTRATION_ID)),
+          new RouteDef("identity.onboarding.activate_registration", true, AuthzMode.AUTHN_ONLY, T_REGISTRATION_ID)),
 
       // ---- OIDC (PUBLIC) ----
       Map.entry("bank.identity.v1.OidcAuthService/StartOidcLogin",

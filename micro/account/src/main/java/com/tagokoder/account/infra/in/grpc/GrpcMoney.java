@@ -16,4 +16,7 @@ public final class GrpcMoney {
   public static double dbl(BigDecimal v) {
     return v == null ? 0.0d : v.doubleValue();
   }
+  public static String str(BigDecimal v) {
+    return v == null ? null : v.toPlainString();
+  }
 }

@@ -3,8 +3,8 @@ package handler
 import (
 	"context"
 
+	ledgerpb "github.com/tagoKoder/bank-contracts/gen/go/bank/ledgerpayments/v1"
 	in "github.com/tagoKoder/ledger/internal/domain/port/in"
-	ledgerpb "github.com/tagoKoder/ledger/internal/genproto/bank/ledgerpayments/v1"
 	"github.com/tagoKoder/ledger/internal/infra/in/grpc/mapper"
 	"github.com/tagoKoder/ledger/internal/infra/in/grpc/validation"
 )

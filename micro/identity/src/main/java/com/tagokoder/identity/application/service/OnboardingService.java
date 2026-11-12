@@ -18,6 +18,8 @@ import com.tagokoder.identity.domain.port.out.AccountsClientPort;
 import com.tagokoder.identity.domain.port.out.IdentityLinkRepositoryPort;
 import com.tagokoder.identity.domain.port.out.KycPresignedStoragePort;
 import com.tagokoder.identity.domain.port.out.RegistrationIntentRepositoryPort;
+import com.tagokoder.identity.domain.port.out.IdentityRepositoryPort;
+import com.tagokoder.identity.infra.security.context.AuthCtx;
 
 @Service
 public class OnboardingService implements StartRegistrationUseCase, ConfirmRegistrationKycUseCase, ActivateRegistrationUseCase {
@@ -28,19 +30,22 @@ public class OnboardingService implements StartRegistrationUseCase, ConfirmRegis
   private final AccountsClientPort accounts;
   private final IdentityClientsProperties clientProps;
   private final IdentityLinkRepositoryPort identityLinks;
+  private final IdentityRepositoryPort identityRepository;
 
   public OnboardingService(
     RegistrationIntentRepositoryPort registrationRepo,
     KycPresignedStoragePort kycStorage,
     AccountsClientPort accounts,
     IdentityClientsProperties clientProps,
-    IdentityLinkRepositoryPort identityLinks
+    IdentityLinkRepositoryPort identityLinks,
+    IdentityRepositoryPort identityRepository
   ) {
     this.registrationRepo = registrationRepo;
     this.kycStorage = kycStorage;
     this.accounts = accounts;
     this.clientProps = clientProps;
     this.identityLinks = identityLinks;
+    this.identityRepository = identityRepository;
   }
 
   @Override
@@ -97,12 +102,32 @@ public class OnboardingService implements StartRegistrationUseCase, ConfirmRegis
   }
 
   @Override
-  @Transactional
   public ActivateRegistrationResult activate(ActivateRegistrationCommand c) {
     UUID regId = c.registrationId();
 
     RegistrationIntent reg = registrationRepo.findById(regId)
       .orElseThrow(() -> new IllegalStateException("registration not found"));
+
+    assertRegistrationOwner(reg);
+
+    var principal = AuthCtx.PRINCIPAL.get();
+
+    if (principal == null
+            || principal.sub() == null
+            || principal.sub().isBlank()) {
+        throw new SecurityException("Authenticated principal required");
+    }
+
+    var identity = identityRepository
+        .findBySubjectAndProvider(principal.sub(), "cognito")
+        .orElseThrow(() ->
+            new SecurityException("Identity not found"));
+
+    if (reg.getIdentityId() == null
+            || !reg.getIdentityId().equals(identity.getId())) {
+        throw new SecurityException(
+            "Registration does not belong to authenticated identity");
+    }
 
     if (reg.getState() == RegistrationIntent.State.ACTIVATED) {
       return buildResponse(reg, c.correlationId());
@@ -165,6 +190,14 @@ public class OnboardingService implements StartRegistrationUseCase, ConfirmRegis
       registrationRepo.save(reg);
     }
 
+    if (isBlank(reg.getCustomerId())
+            || isBlank(reg.getPrimaryAccountId())
+            || isBlank(reg.getBonusJournalId())) {
+        throw new IllegalStateException(
+            "Cannot activate registration: account or bonus is incomplete"
+        );
+    }
+
     reg.setState(RegistrationIntent.State.ACTIVATED);
     reg.setActivatedAt(Instant.now());
     reg.setUpdatedAt(Instant.now());
@@ -197,4 +230,31 @@ public class OnboardingService implements StartRegistrationUseCase, ConfirmRegis
   private static boolean isBlank(String s) {
     return s == null || s.isBlank();
   }
+  private void assertRegistrationOwner(RegistrationIntent reg) {
+    AuthCtx.AuthPrincipal principal = AuthCtx.PRINCIPAL.get();
+
+    if (principal == null ||
+        principal.sub() == null ||
+        principal.sub().isBlank()) {
+        throw new SecurityException("Authentication required");
+    }
+
+    if (reg.getIdentityId() == null) {
+        throw new SecurityException(
+            "Registration is not linked to an authenticated identity"
+        );
+    }
+
+    var identity = identityRepository
+        .findBySubjectAndProvider(principal.sub(), "cognito")
+        .orElseThrow(() ->
+            new SecurityException("Authenticated identity not found")
+        );
+
+    if (!identity.getId().equals(reg.getIdentityId())) {
+        throw new SecurityException(
+            "Authenticated user does not own this registration"
+        );
+    }
+}
 }

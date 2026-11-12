@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/sony/gobreaker"
-	accountsv1 "github.com/tagoKoder/ledger/internal/genproto/bank/accounts/v1"
+	accountsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/accounts/v1"
 	authctx "github.com/tagoKoder/ledger/internal/infra/security/context"
 	"google.golang.org/grpc/metadata"
 )

@@ -14,8 +14,8 @@ import (
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/verifiedpermissions"
+	accountsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/accounts/v1"
 	"github.com/tagoKoder/ledger/internal/application/service"
-	accountsv1 "github.com/tagoKoder/ledger/internal/genproto/bank/accounts/v1"
 	"github.com/tagoKoder/ledger/internal/infra/config"
 	"github.com/tagoKoder/ledger/internal/infra/in/grpc/handler"
 	"github.com/tagoKoder/ledger/internal/infra/in/grpc/middleware"
@@ -27,7 +27,7 @@ import (
 	"github.com/tagoKoder/ledger/internal/infra/security/authz"
 	"github.com/tagoKoder/ledger/internal/infra/security/avp"
 
-	ledgerpb "github.com/tagoKoder/ledger/internal/genproto/bank/ledgerpayments/v1"
+	ledgerpb "github.com/tagoKoder/bank-contracts/gen/go/bank/ledgerpayments/v1"
 	securitygrpc "github.com/tagoKoder/ledger/internal/infra/security/grpc"
 	jwtvalidator "github.com/tagoKoder/ledger/internal/infra/security/jwt"
 	"google.golang.org/grpc"
@@ -114,7 +114,7 @@ func main() {
 
 	vp := verifiedpermissions.NewFromConfig(awsCfg)
 
-	jv := jwtvalidator.New(cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTJWKSURL)
+	jv := jwtvalidator.New(cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTJWKSURL, &cfg)
 	avpClient := avp.New(vp, cfg.AVPPolicyStoreID)
 
 	reg := authz.NewRegistry()
