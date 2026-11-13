@@ -85,13 +85,14 @@ type CreateAccountInput struct {
 	ExternalRef    *string
 }
 type CreateAccountOutput struct {
-	AccountID string
+	AccountID     string
+	AccountNumber string
 }
 
 type Balances struct {
-	Ledger    float64
-	Available float64
-	Hold      float64
+	Ledger    string
+	Available string
+	Hold      string
 }
 type AccountView struct {
 	ID               string
@@ -122,13 +123,13 @@ type GetAccountBalancesOutput struct {
 
 type PatchAccountLimitsInput struct {
 	ID       string
-	DailyOut *float64
-	DailyIn  *float64
+	DailyOut *string
+	DailyIn  *string
 }
 type PatchAccountLimitsOutput struct {
 	AccountID string
-	DailyOut  float64
-	DailyIn   float64
+	DailyOut  string
+	DailyIn   string
 }
 
 // INTERNAL
@@ -136,7 +137,7 @@ type ValidateAccountsAndLimitsInput struct {
 	SourceAccountID      string
 	DestinationAccountID string
 	Currency             string
-	Amount               float64
+	Amount               string
 }
 type ValidateAccountsAndLimitsOutput struct {
 	OK     bool
@@ -145,28 +146,33 @@ type ValidateAccountsAndLimitsOutput struct {
 
 type HoldRequest struct {
 	Currency string
-	Amount   float64
+	Amount   string
 	Reason   *string
 }
 
 type ReserveHoldInput struct {
 	AccountID      string
 	Hold           HoldRequest
+	HoldID         string
 	IdempotencyKey string
 }
 type ReserveHoldOutput struct {
 	OK      bool
-	NewHold float64
+	NewHold string
+	HoldID  string
+	Status  *string
 }
 
 type ReleaseHoldInput struct {
 	AccountID      string
 	Hold           HoldRequest
+	HoldID         string
 	IdempotencyKey string
 }
 type ReleaseHoldOutput struct {
 	OK      bool
-	NewHold float64
+	NewHold string
+	Status  *string
 }
 
 type GetAccountByNumberInput struct {
@@ -181,6 +187,7 @@ type AccountLookupView struct {
 	ProductType   string
 	Currency      string
 	Status        string
+	CustomerID    string
 }
 
 type GetAccountByNumberOutput struct {
@@ -196,8 +203,5 @@ type AccountsPort interface {
 	GetAccountBalances(ctx context.Context, in GetAccountBalancesInput) (GetAccountBalancesOutput, error)
 	PatchAccountLimits(ctx context.Context, in PatchAccountLimitsInput) (PatchAccountLimitsOutput, error)
 
-	ValidateAccountsAndLimits(ctx context.Context, in ValidateAccountsAndLimitsInput) (ValidateAccountsAndLimitsOutput, error)
-	ReserveHold(ctx context.Context, in ReserveHoldInput) (ReserveHoldOutput, error)
-	ReleaseHold(ctx context.Context, in ReleaseHoldInput) (ReleaseHoldOutput, error)
 	GetAccountByNumber(ctx context.Context, in GetAccountByNumberInput) (GetAccountByNumberOutput, error)
 }

@@ -5,9 +5,11 @@ import (
 	"context"
 	"time"
 
-	ledgerpaymentsv1 "github.com/tagoKoder/bff/internal/client/gen/protobuf/bank/ledgerpayments/v1"
+	ledgerpaymentsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/ledgerpayments/v1"
 	"github.com/tagoKoder/bff/internal/client/ports"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -29,7 +31,11 @@ func NewLedgerPaymentsClient(conn *grpc.ClientConn) *LedgerPaymentsClient {
 
 func (c *LedgerPaymentsClient) PostPayment(ctx context.Context, in ports.PostPaymentInput) (ports.PostPaymentOutput, error) {
 
-	res, err := c.payments.PostPayment(ctx, &ledgerpaymentsv1.PostPaymentRequest{
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.payments.PostPayment(ctx2, &ledgerpaymentsv1.PostPaymentRequest{
 		IdempotencyKey:       in.IdempotencyKey,
 		SourceAccountId:      in.SourceAccountID,
 		DestinationAccountId: in.DestinationAccountID,
@@ -45,7 +51,11 @@ func (c *LedgerPaymentsClient) PostPayment(ctx context.Context, in ports.PostPay
 
 func (c *LedgerPaymentsClient) GetPayment(ctx context.Context, in ports.GetPaymentInput) (ports.GetPaymentOutput, error) {
 
-	res, err := c.payments.GetPayment(ctx, &ledgerpaymentsv1.GetPaymentRequest{PaymentId: in.PaymentID})
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.payments.GetPayment(ctx2, &ledgerpaymentsv1.GetPaymentRequest{PaymentId: in.PaymentID})
 	if err != nil {
 		return ports.GetPaymentOutput{}, err
 	}
@@ -77,68 +87,6 @@ func (c *LedgerPaymentsClient) GetPayment(ctx context.Context, in ports.GetPayme
 	return out, nil
 }
 
-func (c *LedgerPaymentsClient) CreditAccount(ctx context.Context, in ports.CreditAccountInput) (ports.CreditAccountOutput, error) {
-
-	req := &ledgerpaymentsv1.CreditAccountRequest{
-		IdempotencyKey: in.IdempotencyKey,
-		AccountId:      in.AccountID,
-		Currency:       in.Currency,
-		Amount:         in.Amount,
-		InitiatedBy:    in.InitiatedBy,
-	}
-	if in.ExternalRef != nil {
-		req.ExternalRef = *in.ExternalRef
-	}
-
-	res, err := c.ledger.CreditAccount(ctx, req)
-	if err != nil {
-		return ports.CreditAccountOutput{}, err
-	}
-	return ports.CreditAccountOutput{JournalID: res.JournalId, Status: res.Status}, nil
-}
-
-func (c *LedgerPaymentsClient) ListAccountJournalEntries(ctx context.Context, in ports.ListAccountJournalEntriesInput) (ports.ListAccountJournalEntriesOutput, error) {
-
-	req := &ledgerpaymentsv1.ListAccountJournalEntriesRequest{
-		AccountId: in.AccountID,
-		Page:      in.Page,
-		Size:      in.Size,
-	}
-	// si luego quieres soportar date params desde OpenAPI, aquí parseas RFC3339->timestamppb
-	res, err := c.ledger.ListAccountJournalEntries(ctx, req)
-	if err != nil {
-		return ports.ListAccountJournalEntriesOutput{}, err
-	}
-
-	out := ports.ListAccountJournalEntriesOutput{
-		Entries: make([]ports.JournalEntryView, 0, len(res.Entries)),
-		Page:    res.Page,
-		Size:    res.Size,
-	}
-	for _, e := range res.Entries {
-		ev := ports.JournalEntryView{
-			JournalID:   e.JournalId,
-			Currency:    e.Currency,
-			Status:      e.Status,
-			ExternalRef: e.ExternalRef,
-			Lines:       make([]ports.JournalLine, 0, len(e.Lines)),
-		}
-		if e.BookedAt != nil {
-			ev.BookedAtRFC3339 = e.BookedAt.AsTime().Format(time.RFC3339)
-		}
-		for _, l := range e.Lines {
-			ev.Lines = append(ev.Lines, ports.JournalLine{
-				GLAccountCode:   l.GlAccountCode,
-				CounterpartyRef: l.CounterpartyRef,
-				Debit:           l.Debit,
-				Credit:          l.Credit,
-			})
-		}
-		out.Entries = append(out.Entries, ev)
-	}
-	return out, nil
-}
-
 func (c *LedgerPaymentsClient) ListAccountStatement(ctx context.Context, in ports.ListAccountStatementInput) (ports.ListAccountStatementOutput, error) {
 
 	req := &ledgerpaymentsv1.ListAccountStatementRequest{
@@ -150,18 +98,24 @@ func (c *LedgerPaymentsClient) ListAccountStatement(ctx context.Context, in port
 
 	if in.FromRFC3339 != nil {
 		t, err := time.Parse(time.RFC3339, *in.FromRFC3339)
-		if err == nil {
-			req.From = timestamppb.New(t)
+		if err != nil {
+			return ports.ListAccountStatementOutput{}, status.Error(codes.InvalidArgument, "invalid from timestamp")
 		}
+		req.From = timestamppb.New(t)
 	}
 	if in.ToRFC3339 != nil {
 		t, err := time.Parse(time.RFC3339, *in.ToRFC3339)
-		if err == nil {
-			req.To = timestamppb.New(t)
+		if err != nil {
+			return ports.ListAccountStatementOutput{}, status.Error(codes.InvalidArgument, "invalid to timestamp")
 		}
+		req.To = timestamppb.New(t)
 	}
 
-	res, err := c.ledger.ListAccountStatement(ctx, req)
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.ledger.ListAccountStatement(ctx2, req)
 	if err != nil {
 		return ports.ListAccountStatementOutput{}, err
 	}

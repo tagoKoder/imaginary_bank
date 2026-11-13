@@ -1,3 +1,4 @@
+// bff\internal\client\grpc\meta.go
 package grpc
 
 import (
@@ -32,5 +33,5 @@ func withMeta(ctx context.Context, m CallMeta) context.Context {
 	if m.SessionID != "" {
 		pairs = append(pairs, mdSessionID, m.SessionID)
 	}
-	return metadata.NewOutgoingContext(ctx, metadata.Pairs(pairs...))
+	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

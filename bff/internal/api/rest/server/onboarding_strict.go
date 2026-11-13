@@ -1,3 +1,4 @@
+// bff\internal\api\rest\server\onboarding_strict.go
 package server
 
 import (
@@ -10,14 +11,14 @@ func (s *Server) StartOnboarding(
 	ctx context.Context,
 	req openapi.StartOnboardingRequestObject,
 ) (openapi.StartOnboardingResponseObject, error) {
-	return s.onboarding.StartOnboardingStrict(ctx, req.Params.IdempotencyKey, *req.Body)
+	return s.onboarding.StartOnboardingStrict(ctx, *req.Body)
 }
 
 func (s *Server) ConfirmOnboardingKyc(
 	ctx context.Context,
 	req openapi.ConfirmOnboardingKycRequestObject,
 ) (openapi.ConfirmOnboardingKycResponseObject, error) {
-	return s.onboarding.ConfirmOnboardingKycStrict(ctx, req.Params.IdempotencyKey, *req.Body)
+	return s.onboarding.ConfirmOnboardingKycStrict(ctx, *req.Body)
 }
 
 func (s *Server) ActivateOnboarding(

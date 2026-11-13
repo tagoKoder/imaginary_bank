@@ -1,4 +1,3 @@
-// bff\internal\api\rest\httperr\httperr.go
 package httperr
 
 import (
@@ -16,7 +15,6 @@ type ErrorResponse struct {
 	Details map[string]any `json:"details,omitempty"`
 }
 
-// AppError: error con “cara pública” y causa interna.
 type AppError struct {
 	HTTPStatus int
 	PublicCode string
@@ -31,89 +29,69 @@ func (e *AppError) Error() string {
 	}
 	return e.PublicCode
 }
-
 func (e *AppError) Unwrap() error { return e.Cause }
-
-func New(status int, code, msg string) *AppError {
-	return &AppError{HTTPStatus: status, PublicCode: code, PublicMsg: msg}
+func New(code int, slug, msg string) *AppError {
+	return &AppError{HTTPStatus: code, PublicCode: slug, PublicMsg: msg}
 }
-
 func (e *AppError) WithCause(err error) *AppError          { e.Cause = err; return e }
 func (e *AppError) WithDetails(d map[string]any) *AppError { e.PublicDet = d; return e }
-
-// Helpers comunes (alineados a tu OpenAPI)
-func BadRequest() *AppError   { return New(http.StatusBadRequest, "BAD_REQUEST", "Invalid request") }
-func Unauthorized() *AppError { return New(http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized") }
-func Forbidden() *AppError    { return New(http.StatusForbidden, "FORBIDDEN", "Forbidden") }
-func NotFound() *AppError     { return New(http.StatusNotFound, "NOT_FOUND", "Not found") }
-func Conflict() *AppError     { return New(http.StatusConflict, "CONFLICT", "Conflict") }
-func Upstream() *AppError {
-	return New(http.StatusBadGateway, "UPSTREAM_ERROR", "Upstream service error")
-}
-func Internal() *AppError {
-	return New(http.StatusInternalServerError, "INTERNAL", "Internal server error")
-}
-
-// MapGrpc: mapea códigos gRPC a HTTP sin filtrar mensajes internos.
+func BadRequest() *AppError                                { return New(400, "BAD_REQUEST", "Invalid request") }
+func Unauthorized() *AppError                              { return New(401, "UNAUTHORIZED", "Unauthorized") }
+func Forbidden() *AppError                                 { return New(403, "FORBIDDEN", "Forbidden") }
+func NotFound() *AppError                                  { return New(404, "NOT_FOUND", "Not found") }
+func Conflict() *AppError                                  { return New(409, "CONFLICT", "Conflict") }
+func Upstream() *AppError                                  { return New(502, "UPSTREAM_ERROR", "Upstream service error") }
+func Internal() *AppError                                  { return New(500, "INTERNAL", "Internal server error") }
 func MapGrpc(err error) *AppError {
 	st, ok := status.FromError(err)
 	if !ok {
 		return Internal().WithCause(err)
 	}
-
 	switch st.Code() {
-	case codes.InvalidArgument, codes.FailedPrecondition, codes.OutOfRange:
+	case codes.InvalidArgument, codes.OutOfRange:
 		return BadRequest().WithCause(err)
+	case codes.FailedPrecondition, codes.AlreadyExists, codes.Aborted:
+		return Conflict().WithCause(err)
 	case codes.Unauthenticated:
 		return Unauthorized().WithCause(err)
 	case codes.PermissionDenied:
 		return Forbidden().WithCause(err)
 	case codes.NotFound:
 		return NotFound().WithCause(err)
-	case codes.AlreadyExists, codes.Aborted:
-		return Conflict().WithCause(err)
-	case codes.Unavailable, codes.DeadlineExceeded:
-		return Upstream().WithCause(err)
+	case codes.ResourceExhausted:
+		return New(429, "RATE_LIMITED", "Too many requests").WithCause(err)
+	case codes.Unavailable:
+		return New(503, "SERVICE_UNAVAILABLE", "Service temporarily unavailable").WithCause(err)
+	case codes.DeadlineExceeded:
+		return New(504, "UPSTREAM_TIMEOUT", "Upstream deadline exceeded").WithCause(err)
 	default:
 		return Internal().WithCause(err)
 	}
 }
-
-// Normalize: convierte cualquier error en AppError (sanitizado).
 func Normalize(err error) *AppError {
 	if err == nil {
 		return nil
 	}
-
-	var ae *AppError
-	if errors.As(err, &ae) {
-		return ae
+	var app *AppError
+	if errors.As(err, &app) {
+		return app
 	}
-
-	// gRPC (la mayoría de tus errores “reales” vendrán de aquí)
 	if _, ok := status.FromError(err); ok {
 		return MapGrpc(err)
 	}
-
-	// fallback
 	return Internal().WithCause(err)
 }
-
-// Write: responde JSON sanitizado + setea headers mínimos
-// debug=false => NO incluir details ni mensajes internos
 func Write(w http.ResponseWriter, r *http.Request, err error, debug bool) {
-	ae := Normalize(err)
-
-	resp := ErrorResponse{
-		Code:    ae.PublicCode,
-		Message: ae.PublicMsg,
+	app := Normalize(err)
+	if app == nil {
+		return
 	}
-
-	if debug && ae.PublicDet != nil {
-		resp.Details = ae.PublicDet
+	resp := ErrorResponse{Code: app.PublicCode, Message: app.PublicMsg}
+	if debug && app.PublicDet != nil {
+		resp.Details = app.PublicDet
 	}
-
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(ae.HTTPStatus)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(app.HTTPStatus)
 	_ = json.NewEncoder(w).Encode(resp)
 }

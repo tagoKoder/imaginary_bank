@@ -97,7 +97,7 @@ type StartRegistrationInput struct {
 	NationalIDIssueDate string
 	FingerprintCode     string
 
-	MonthlyIncome  float64
+	MonthlyIncome  string
 	OccupationType string // student|employee|self_employed|unemployed|retired
 
 	Email string
@@ -153,7 +153,7 @@ type ActivateRegistrationInput struct {
 	Country        string
 	Email          string
 	Phone          string
-	AcceptedTerms  *bool
+	AcceptedTerms  bool
 }
 
 type ActivatedAccount struct {

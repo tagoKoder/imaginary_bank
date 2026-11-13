@@ -50,14 +50,15 @@ func NewRouter(deps RouterDeps, swagger *openapi3.T, swaggerValidator func(http.
 	// 5) Rate limiting
 	r.Use(middleware.RateLimit(deps.Server.deps.Config.RateLimitRPS))
 
-	// 6) Auth cookie session (OpenAPI-driven)
+	// CSRF must validate the original request cookies before automatic session refresh.
+	r.Use(middleware.CSRF(deps.Server.deps.CSRF, oas))
+
+	// AuthSession can rotate SID and CSRF cookies together when refreshing.
 	r.Use(middleware.AuthSession(middleware.AuthDeps{
 		Identity: deps.Server.deps.Clients.Identity,
 		Cookies:  deps.Server.deps.Cookies,
+		CSRF:     deps.Server.deps.CSRF,
 	}, oas))
-
-	// 7) CSRF (OpenAPI-driven)
-	r.Use(middleware.CSRF(deps.Server.deps.CSRF, oas))
 
 	// 8) OpenAPI STRICT handler
 	strict := openapi.NewStrictHandlerWithOptions(

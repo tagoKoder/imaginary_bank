@@ -1,68 +1,20 @@
+// bff\internal\api\rest\v1\web\feature\payments\strict.go
 package payments
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/tagoKoder/bff/internal/util"
 
 	openapi "github.com/tagoKoder/bff/internal/api/rest/gen/openapi"
 	"github.com/tagoKoder/bff/internal/api/rest/middleware"
 	"github.com/tagoKoder/bff/internal/client/ports"
 	"github.com/tagoKoder/bff/internal/security"
 )
-
-func (h *Handler) CreateBeneficiaryStrict(
-	ctx context.Context,
-	params openapi.CreateBeneficiaryParams,
-	body openapi.CreateBeneficiaryRequest,
-) (openapi.CreateBeneficiaryResponseObject, error) {
-	_ = params.XCSRFToken // ya validado por strict + CSRF middleware
-	corrId := security.CorrelationID(ctx)
-
-	// MVP “beneficiary”: sin puerto específico en tu ports (no hay BeneficiariesPort).
-	// Al menos validamos que el usuario tenga customer en contexto y que el destino sea una cuenta visible.
-	customerID, _ := ctx.Value(middleware.CtxCustomer).(string)
-	if customerID == "" {
-		return openapi.CreateBeneficiary403JSONResponse(openapi.ErrorResponse{
-			Code:    "FORBIDDEN",
-			Message: "missing customer context",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
-	}
-
-	accs, err := h.clients.Accounts.ListAccounts(ctx, ports.ListAccountsInput{CustomerID: customerID})
-	if err != nil {
-		return openapi.CreateBeneficiary502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "accounts service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
-	}
-
-	ok := false
-	for _, a := range accs.Accounts {
-		if a.ID == body.DestinationAccount {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return openapi.CreateBeneficiary400JSONResponse(openapi.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "destination_account not allowed for this customer",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
-	}
-
-	resp := openapi.CreateBeneficiaryResponse{BeneficiaryId: body.DestinationAccount}
-	return openapi.CreateBeneficiary201JSONResponse{
-		Body: resp,
-		Headers: openapi.CreateBeneficiary201ResponseHeaders{
-			XCorrelationId: corrId,
-		},
-	}, nil
-}
 
 func (h *Handler) CreatePaymentStrict(
 	ctx context.Context,
@@ -88,40 +40,14 @@ func (h *Handler) CreatePaymentStrict(
 		}), nil
 	}
 
-	amtFloat, err := strconv.ParseFloat(body.Amount, 64)
-	if err != nil || amtFloat <= 0 {
-		return openapi.ExecutePayment400JSONResponse(openapi.ErrorResponse{
-			Code:    "BAD_REQUEST",
-			Message: "invalid amount",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+	if err := util.ValidatePositiveMoney(body.Amount); err != nil {
+		return openapi.ExecutePayment400JSONResponse(openapi.ErrorResponse{Code: "BAD_REQUEST", Message: "invalid amount"}), nil
 	}
-
-	// Validación de cuentas y límites (micro Accounts internal)
-	val, err := h.clients.Accounts.ValidateAccountsAndLimits(ctx, ports.ValidateAccountsAndLimitsInput{
-		SourceAccountID:      body.SourceAccount,
-		DestinationAccountID: body.DestinationAccount,
-		Currency:             body.Currency,
-		Amount:               amtFloat,
-	})
-	if err != nil {
-		return openapi.ExecutePayment502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "accounts validation unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+	if _, err := uuid.Parse(body.SourceAccount); err != nil {
+		return openapi.ExecutePayment400JSONResponse(openapi.ErrorResponse{Code: "BAD_REQUEST", Message: "invalid source account"}), nil
 	}
-	if !val.OK {
-		details := map[string]any{}
-		if val.Reason != nil {
-			details["correlation_id"] = corrId
-			details["reason"] = *val.Reason
-		}
-		return openapi.ExecutePayment400JSONResponse(openapi.ErrorResponse{
-			Code:    "VALIDATION_FAILED",
-			Message: "payment validation failed",
-			Details: &details,
-		}), nil
+	if _, err := uuid.Parse(body.DestinationAccount); err != nil || body.SourceAccount == body.DestinationAccount {
+		return openapi.ExecutePayment400JSONResponse(openapi.ErrorResponse{Code: "BAD_REQUEST", Message: "invalid destination account"}), nil
 	}
 
 	// Ejecuta pago (micro LedgerPayments)
@@ -134,13 +60,12 @@ func (h *Handler) CreatePaymentStrict(
 		InitiatedBy:          sub,
 	})
 	if err != nil {
-		return openapi.ExecutePayment502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "ledgerpayments service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
+	if out.Status != "processing" && out.Status != "posted" && out.Status != "failed" {
+		return nil, fmt.Errorf("payments response contains invalid status")
+	}
 	resp := openapi.CreatePaymentResponse{
 		PaymentId: out.PaymentID,
 		Status:    mapPaymentStatus(out.Status),
@@ -169,31 +94,19 @@ func (h *Handler) GetPaymentStrict(
 
 	out, err := h.clients.LedgerPayments.GetPayment(ctx, ports.GetPaymentInput{PaymentID: id})
 	if err != nil {
-		return openapi.GetPaymentStatus502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "ledgerpayments service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
 	createdAt, err := time.Parse(time.RFC3339, out.CreatedAtRFC3339)
 	if err != nil {
-		return openapi.GetPaymentStatus502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "invalid created_at from upstream",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
 	steps := make([]openapi.PaymentStep, 0, len(out.Steps))
 	for _, s := range out.Steps {
 		at, err := time.Parse(time.RFC3339, s.AttemptedAtRFC3339)
 		if err != nil {
-			return openapi.GetPaymentStatus502JSONResponse(openapi.ErrorResponse{
-				Code:    "UPSTREAM_ERROR",
-				Message: "invalid attempted_at from upstream",
-				Details: &map[string]interface{}{"correlation_id": corrId},
-			}), nil
+			return nil, err
 		}
 		var details *string
 		if strings.TrimSpace(s.DetailsJSON) != "" {
@@ -211,7 +124,6 @@ func (h *Handler) GetPaymentStrict(
 	resp := openapi.GetPaymentResponse{
 		PaymentId:          out.PaymentID,
 		Status:             out.Status,
-		IdempotencyKey:     out.IdempotencyKey,
 		SourceAccount:      out.SourceAccountID,
 		DestinationAccount: out.DestinationAccountID,
 		Currency:           out.Currency,
@@ -229,17 +141,7 @@ func (h *Handler) GetPaymentStrict(
 }
 
 func mapPaymentStatus(s string) openapi.CreatePaymentResponseStatus {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "posted":
-		return openapi.CreatePaymentResponseStatus("posted")
-	case "pending":
-		return openapi.CreatePaymentResponseStatus("pending")
-	case "rejected":
-		return openapi.CreatePaymentResponseStatus("rejected")
-	case "failed":
-		return openapi.CreatePaymentResponseStatus("failed")
-	default:
-		// fallback seguro
-		return openapi.CreatePaymentResponseStatus("pending")
-	}
+	// PaymentsService.PostPayment: posted|processing|failed. Unknown values are
+	// rejected before returning success; see validation below.
+	return openapi.CreatePaymentResponseStatus(s)
 }

@@ -4,11 +4,9 @@ package middleware
 
 import (
 	"context"
-	"log"
 	"net/http"
 
 	"github.com/tagoKoder/bff/internal/client/ports"
-	"github.com/tagoKoder/bff/internal/config"
 	"github.com/tagoKoder/bff/internal/security"
 	"github.com/tagoKoder/bff/internal/util"
 	"google.golang.org/grpc/codes"
@@ -25,10 +23,9 @@ const (
 )
 
 type AuthDeps struct {
-	Config   config.Config
 	Identity ports.IdentityPort
 	Cookies  *security.CookieManager
-	//TokenCache security.TokenCache
+	CSRF     *security.CSRFManager
 }
 
 func AuthSession(deps AuthDeps, oas *OpenAPISecurity) func(http.Handler) http.Handler {
@@ -39,179 +36,111 @@ func AuthSession(deps AuthDeps, oas *OpenAPISecurity) func(http.Handler) http.Ha
 				next.ServeHTTP(w, r)
 				return
 			}
-
 			sid, ok := deps.Cookies.ReadSessionID(r)
 			if !ok || sid == "" {
-				log.Printf("missing sid cookie: cookieHeader=%q expectedName=%s host=%s", r.Header.Get("Cookie"), deps.Cookies.Name(), r.Host)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-
 			ctx := r.Context()
 			ctx = security.WithSessionID(ctx, sid)
-
-			ip := util.GetClientIP(r)
-			ua := r.UserAgent()
-			// NEW: guarda contexto para propagación gRPC
-			ctx = security.WithClientIP(ctx, ip)
-			ctx = security.WithUserAgent(ctx, ua)
+			ctx = security.WithClientIP(ctx, util.GetClientIP(r))
+			ctx = security.WithUserAgent(ctx, r.UserAgent())
 			ctx = security.WithRouteTemplate(ctx, ri.RouteTemplate)
-
 			if ik := r.Header.Get("Idempotency-Key"); ik != "" {
 				ctx = security.WithIdempotencyKey(ctx, ik)
 			}
-
-			info, newSid, accessTok, err := getSessionInfoWithRefresh(ctx, deps, sid, ip, ua, w)
-			// después de getSessionInfoWithRefresh(...)
-			log.Printf(
-				"auth_session cid=%s op=%s sid=%s customer=%s accessTokLen=%d expIn=%d",
-				security.CorrelationID(ctx),
-				ri.OperationID,
-				sid,
-				info.CustomerID,
-				len(accessTok),
-				info.AccessTokenExpiresIn,
-			)
-			if err != nil {
-				// getSessionInfoWithRefresh ya escribió la respuesta (401/503/etc)
+			// Refresh and logout are the authoritative session lifecycle operations.
+			// Pre-refreshing here would rotate twice, or revoke the wrong SID.
+			if ri.OperationID == "refreshWebSession" || ri.OperationID == "logoutWebSession" {
+				ctx = context.WithValue(ctx, CtxSession, sid)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
-
-			ctx = security.WithSessionID(ctx, newSid)
-			ctx = security.WithAccessToken(ctx, accessTok)
-
-			// si refrescó, actualiza ctx con el nuevo sid
-			if newSid != "" && newSid != sid {
-				ctx = security.WithSessionID(ctx, newSid)
-				sid = newSid
-			}
-
-			// control de estado de usuario
+			ip, ua := util.GetClientIP(r), r.UserAgent()
+			info, finalSID, token, err := getSessionInfoWithRefresh(ctx, deps, sid, ip, ua, w)
+			if err != nil {
+				return
+			} // status already written
 			if info.UserStatus != "" && info.UserStatus != "ACTIVE" {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-
+			if info.SubjectIDOidc == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			ctx = security.WithSessionID(ctx, finalSID)
+			ctx = security.WithAccessToken(ctx, token)
 			ctx = context.WithValue(ctx, CtxSubject, info.SubjectIDOidc)
 			ctx = context.WithValue(ctx, CtxRoles, info.User.Roles)
-			ctx = context.WithValue(ctx, CtxSession, sid)
+			ctx = context.WithValue(ctx, CtxSession, finalSID)
 			ctx = context.WithValue(ctx, CtxCustomer, info.CustomerID)
 			ctx = context.WithValue(ctx, CtxUserState, info.UserStatus)
 			ctx = context.WithValue(ctx, CtxIdentity, info.IdentityID)
-			ctx = context.WithValue(ctx, ctxKey("route_template"), ri.RouteTemplate)
-
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-func getSessionInfoWithRefresh(
-	ctx context.Context,
-	deps AuthDeps,
-	sid string,
-	ip string,
-	ua string,
-	w http.ResponseWriter,
-) (ports.GetSessionInfoOutput, string, string, error) {
-
-	const skewSeconds int64 = 30
-
-	// 1) intento normal: GetSessionInfo
-	info, err := deps.Identity.GetSessionInfo(ctx, ports.GetSessionInfoInput{
-		SessionID: sid,
-		IP:        ip,
-		UserAgent: ua,
-	})
-	if err == nil {
-		// Si Identity ya te da access token vigente -> úsalo.
-		if info.AccessToken != "" && info.AccessTokenExpiresIn > skewSeconds {
-			return info, "", info.AccessToken, nil
-		}
-
-		// Si token falta o está por expirar -> refresh (rota sid)
-		ref, rerr := deps.Identity.RefreshSession(ctx, ports.RefreshSessionInput{
-			SessionID: sid,
-			IP:        ip,
-			UserAgent: ua,
-		})
-		if rerr != nil {
-			deps.Cookies.Clear(w)
-			w.WriteHeader(http.StatusUnauthorized)
-			return ports.GetSessionInfoOutput{}, "", "", rerr
-		}
-		// rota cookie
-		deps.Cookies.WriteSessionID(w, ref.SessionID, ref.SessionExpiresIn)
-
-		// re-pide info para roles/status/customer_id coherentes con el nuevo sid
-		info2, err2 := deps.Identity.GetSessionInfo(ctx, ports.GetSessionInfoInput{
-			SessionID: ref.SessionID,
-			IP:        ip,
-			UserAgent: ua,
-		})
-		if err2 != nil {
-			deps.Cookies.Clear(w)
-			w.WriteHeader(http.StatusUnauthorized)
-			return ports.GetSessionInfoOutput{}, "", "", err2
-		}
-
-		return info2, ref.SessionID, ref.AccessToken, nil
+func getSessionInfoWithRefresh(ctx context.Context, deps AuthDeps, sid, ip, ua string, w http.ResponseWriter) (ports.GetSessionInfoOutput, string, string, error) {
+	info, err := deps.Identity.GetSessionInfo(ctx, ports.GetSessionInfoInput{SessionID: sid, IP: ip, UserAgent: ua})
+	if err == nil && info.AccessToken != "" && info.AccessTokenExpiresIn > 30 {
+		return info, sid, info.AccessToken, nil
 	}
-
-	// 2) clasifica error gRPC
-	st, ok := status.FromError(err)
-	if !ok {
-		http.Error(w, "Session error", http.StatusBadGateway)
-		return ports.GetSessionInfoOutput{}, "", "", err
-	}
-
-	switch st.Code() {
-	case codes.Unauthenticated:
-		// solo refresca si es SESSION_EXPIRED (idle TTL venció, pero absolute TTL puede seguir vivo)
-		if st.Message() == "SESSION_EXPIRED" {
-			ref, rerr := deps.Identity.RefreshSession(ctx, ports.RefreshSessionInput{
-				SessionID: sid,
-				IP:        ip,
-				UserAgent: ua,
-			})
-			if rerr != nil {
+	if err != nil {
+		st, ok := status.FromError(err)
+		if !ok {
+			w.WriteHeader(http.StatusBadGateway)
+			return ports.GetSessionInfoOutput{}, "", "", err
+		}
+		if st.Code() != codes.Unauthenticated || st.Message() != "SESSION_EXPIRED" {
+			switch st.Code() {
+			case codes.Unauthenticated, codes.NotFound, codes.FailedPrecondition:
 				deps.Cookies.Clear(w)
+				deps.CSRF.Clear(w)
 				w.WriteHeader(http.StatusUnauthorized)
-				return ports.GetSessionInfoOutput{}, "", "", rerr
+			case codes.PermissionDenied:
+				w.WriteHeader(http.StatusForbidden)
+			case codes.Unavailable, codes.DeadlineExceeded:
+				w.WriteHeader(http.StatusServiceUnavailable)
+			default:
+				w.WriteHeader(http.StatusBadGateway)
 			}
-
-			deps.Cookies.WriteSessionID(w, ref.SessionID, ref.SessionExpiresIn)
-
-			info2, err2 := deps.Identity.GetSessionInfo(ctx, ports.GetSessionInfoInput{
-				SessionID: ref.SessionID,
-				IP:        ip,
-				UserAgent: ua,
-			})
-			if err2 != nil {
-				deps.Cookies.Clear(w)
-				w.WriteHeader(http.StatusUnauthorized)
-				return ports.GetSessionInfoOutput{}, "", "", err2
-			}
-
-			return info2, ref.SessionID, ref.AccessToken, nil
+			return ports.GetSessionInfoOutput{}, "", "", err
 		}
-
-		// revoked / invalid -> limpiar cookie
-		deps.Cookies.Clear(w)
-		w.WriteHeader(http.StatusUnauthorized)
-		return ports.GetSessionInfoOutput{}, "", "", err
-
-	case codes.NotFound, codes.FailedPrecondition:
-		// no existe / absolute expired -> no refresh
-		deps.Cookies.Clear(w)
-		w.WriteHeader(http.StatusUnauthorized)
-		return ports.GetSessionInfoOutput{}, "", "", err
-
-	case codes.Unavailable, codes.DeadlineExceeded:
-		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
-		return ports.GetSessionInfoOutput{}, "", "", err
-
-	default:
-		http.Error(w, "Session error", http.StatusBadGateway)
-		return ports.GetSessionInfoOutput{}, "", "", err
 	}
+	// Refresh only when Identity indicates an expired session, or a token is near expiry.
+	ref, rerr := deps.Identity.RefreshSession(ctx, ports.RefreshSessionInput{SessionID: sid, IP: ip, UserAgent: ua})
+	if rerr != nil {
+		st, ok := status.FromError(rerr)
+		if ok && (st.Code() == codes.Unavailable || st.Code() == codes.DeadlineExceeded) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			deps.Cookies.Clear(w)
+			deps.CSRF.Clear(w)
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+		return ports.GetSessionInfoOutput{}, "", "", rerr
+	}
+	if ref.SessionID == "" || ref.AccessToken == "" || ref.SessionExpiresIn <= 0 {
+		w.WriteHeader(http.StatusBadGateway)
+		return ports.GetSessionInfoOutput{}, "", "", status.Error(codes.Internal, "invalid refresh response")
+	}
+	info2, e2 := deps.Identity.GetSessionInfo(ctx, ports.GetSessionInfoInput{SessionID: ref.SessionID, IP: ip, UserAgent: ua})
+	if e2 != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		return ports.GetSessionInfoOutput{}, "", "", e2
+	}
+	if info2.SubjectIDOidc == "" {
+		w.WriteHeader(http.StatusBadGateway)
+		return ports.GetSessionInfoOutput{}, "", "", status.Error(codes.Internal, "invalid session info")
+	}
+	// Both cookies must be emitted before next handler starts its response.
+	if _, e := deps.CSRF.IssueForSession(w, ref.SessionID); e != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return ports.GetSessionInfoOutput{}, "", "", e
+	}
+	deps.Cookies.Set(w, ref.SessionID, ref.SessionExpiresIn)
+	w.Header().Set("Cache-Control", "no-store")
+	return info2, ref.SessionID, ref.AccessToken, nil
 }

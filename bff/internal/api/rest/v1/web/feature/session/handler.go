@@ -39,17 +39,13 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 // GET /bff/session/csrf (manual)
 // - Devuelve token actual; si no existe, lo crea
 func (h *Handler) CSRFToken(w http.ResponseWriter, r *http.Request) {
-	if err := h.csrf.EnsureToken(w, r); err != nil {
+	tok, err := h.csrf.GetOrCreateToken(w, r)
+	if err != nil || tok == "" {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	tok, ok := h.csrf.ReadToken(r)
-	if !ok || tok == "" {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"csrf_token": tok,

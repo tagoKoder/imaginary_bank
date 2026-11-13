@@ -3,7 +3,7 @@ package accounts
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +11,7 @@ import (
 	"github.com/tagoKoder/bff/internal/api/rest/middleware"
 	"github.com/tagoKoder/bff/internal/client/ports"
 	"github.com/tagoKoder/bff/internal/security"
+	"github.com/tagoKoder/bff/internal/util"
 )
 
 func (h *Handler) OverviewStrict(ctx context.Context) (openapi.GetAccountsOverviewResponseObject, error) {
@@ -26,29 +27,29 @@ func (h *Handler) OverviewStrict(ctx context.Context) (openapi.GetAccountsOvervi
 
 	out, err := h.clients.Accounts.ListAccounts(ctx, ports.ListAccountsInput{CustomerID: customerID})
 	if err != nil {
-		return openapi.GetAccountsOverview502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
 	resp := openapi.AccountsOverviewResponse{Accounts: make([]openapi.AccountItem, 0, len(out.Accounts))}
 	for _, a := range out.Accounts {
-		bal := openapi.AccountBalances{Ledger: "0.00", Available: "0.00", Hold: "0.00"}
+		if a.Balances == nil {
+			return nil, fmt.Errorf("accounts response missing balances")
+		}
+		bal := openapi.AccountBalances{}
 		if a.Balances != nil {
 			bal = openapi.AccountBalances{
-				Ledger:    formatMoney(a.Balances.Ledger),
-				Available: formatMoney(a.Balances.Available),
-				Hold:      formatMoney(a.Balances.Hold),
+				Ledger:    a.Balances.Ledger,
+				Available: a.Balances.Available,
+				Hold:      a.Balances.Hold,
 			}
 		}
 		resp.Accounts = append(resp.Accounts, openapi.AccountItem{
-			Id:          a.ID,
-			ProductType: a.ProductType,
-			Currency:    a.Currency,
-			Status:      a.Status,
-			Balances:    bal,
+			Id:            a.ID,
+			AccountNumber: &a.AccountNumber,
+			ProductType:   a.ProductType,
+			Currency:      a.Currency,
+			Status:        a.Status,
+			Balances:      bal,
 		})
 	}
 
@@ -68,58 +69,76 @@ func (h *Handler) PatchLimitsStrict(
 ) (openapi.PatchAccountLimitsResponseObject, error) {
 
 	_ = params.XCSRFToken
-	//idem := params.IdempotencyKey
-	corrId := security.CorrelationID(ctx)
+	corrID := security.CorrelationID(ctx)
 
-	// parse opcionales (string decimal) a float64 si tu proto usa float
-	var dailyOut *float64
+	badRequest := func(message string) openapi.PatchAccountLimitsResponseObject {
+		return openapi.PatchAccountLimits400JSONResponse(
+			openapi.ErrorResponse{
+				Code:    "BAD_REQUEST",
+				Message: message,
+				Details: &map[string]interface{}{
+					"correlation_id": corrID,
+				},
+			},
+		)
+	}
+
+	// PATCH: both fields are optional, but at least
+	// one must be provided.
+	if body.DailyOut == nil && body.DailyIn == nil {
+		return badRequest(
+			"at least one limit must be provided",
+		), nil
+	}
+
+	// Preserve nil to distinguish an omitted field
+	// from a field explicitly set to zero.
+	var dailyOut *string
+
 	if body.DailyOut != nil {
-		v, err := strconv.ParseFloat(*body.DailyOut, 64)
-		if err != nil || v < 0 {
-			return openapi.PatchAccountLimits400JSONResponse(openapi.ErrorResponse{
-				Code:    "BAD_REQUEST",
-				Message: "invalid daily_out value",
-				Details: &map[string]interface{}{"correlation_id": corrId},
-			}), nil
+		if err := util.ValidateMoney(*body.DailyOut); err != nil {
+			return badRequest(
+				"invalid daily_out value",
+			), nil
 		}
-		dailyOut = &v
+
+		dailyOut = body.DailyOut
 	}
 
-	var dailyIn *float64
+	var dailyIn *string
+
 	if body.DailyIn != nil {
-		v, err := strconv.ParseFloat(*body.DailyIn, 64)
-		if err != nil || v < 0 {
-			return openapi.PatchAccountLimits400JSONResponse(openapi.ErrorResponse{
-				Code:    "BAD_REQUEST",
-				Message: "invalid daily_in value",
-				Details: &map[string]interface{}{"correlation_id": corrId},
-			}), nil
+		if err := util.ValidateMoney(*body.DailyIn); err != nil {
+			return badRequest(
+				"invalid daily_in value",
+			), nil
 		}
-		dailyIn = &v
+
+		dailyIn = body.DailyIn
 	}
 
-	out, err := h.clients.Accounts.PatchAccountLimits(ctx, ports.PatchAccountLimitsInput{
-		//IdempotencyKey: idem, // añade este campo en ports si aún no existe
-		ID:       accountID,
-		DailyOut: dailyOut,
-		DailyIn:  dailyIn,
-	})
+	// Call Accounts microservice.
+	out, err := h.clients.Accounts.PatchAccountLimits(
+		ctx,
+		ports.PatchAccountLimitsInput{
+			ID:       accountID,
+			DailyOut: dailyOut,
+			DailyIn:  dailyIn,
+		},
+	)
+
 	if err != nil {
-		// si tu micro devuelve “idempotency mismatch” mapear a 409
-		return openapi.PatchAccountLimits502JSONResponse(openapi.ErrorResponse{
-			Code: "UPSTREAM_ERROR", Message: "accounts service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
 	return openapi.PatchAccountLimits200JSONResponse{
 		Body: openapi.PatchAccountLimitsHttpResponse{
 			AccountId: out.AccountID,
-			DailyOut:  formatMoney(out.DailyOut),
-			DailyIn:   formatMoney(out.DailyIn),
+			DailyOut:  out.DailyOut,
+			DailyIn:   out.DailyIn,
 		},
 		Headers: openapi.PatchAccountLimits200ResponseHeaders{
-			XCorrelationId: corrId,
+			XCorrelationId: corrID,
 		},
 	}, nil
 }
@@ -150,19 +169,11 @@ func (h *Handler) LookupByNumberStrict(
 		// IncludeInactive: nil, // opcional si luego lo agregas
 	})
 	if err != nil {
-		return openapi.LookupAccountByNumber502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "accounts service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 	accountId, err := uuid.Parse(out.Account.AccountID)
 	if err != nil {
-		return openapi.LookupAccountByNumber502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "invalid account_id format from upstream",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
 	resp := openapi.AccountLookupResponse{
@@ -236,11 +247,7 @@ func (h *Handler) StatementStrict(
 		IncludeCounterparty: includeCP,
 	})
 	if err != nil {
-		return openapi.GetAccountStatement502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "ledgerpayments service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
 	items := make([]openapi.StatementItem, 0, len(out.Items))
@@ -248,11 +255,7 @@ func (h *Handler) StatementStrict(
 	for _, it := range out.Items {
 		t, err := time.Parse(time.RFC3339, it.BookedAtRFC3339)
 		if err != nil {
-			return openapi.GetAccountStatement502JSONResponse(openapi.ErrorResponse{
-				Code:    "UPSTREAM_ERROR",
-				Message: "invalid booked_at from upstream",
-				Details: &map[string]interface{}{"correlation_id": corrId},
-			}), nil
+			return nil, err
 		}
 
 		// CounterpartyAccountId opcional
@@ -260,11 +263,7 @@ func (h *Handler) StatementStrict(
 		if it.CounterpartyAccountID != nil && *it.CounterpartyAccountID != "" {
 			parsed, err := uuid.Parse(*it.CounterpartyAccountID)
 			if err != nil {
-				return openapi.GetAccountStatement502JSONResponse(openapi.ErrorResponse{
-					Code:    "UPSTREAM_ERROR",
-					Message: "invalid counterparty_account_id from upstream",
-					Details: &map[string]interface{}{"correlation_id": corrId},
-				}), nil
+				return nil, err
 			}
 			cpAccountUUID = &parsed
 		}
@@ -275,13 +274,16 @@ func (h *Handler) StatementStrict(
 			// si viene counterparty pero NO viene account id, igual no revientes:
 			// usa cpAccountUUID si existe, si no deja AccountId en nil/zero según tu spec
 			// (aquí asumo que AccountId NO es pointer en openapi y requiere valor)
-			var cpId uuid.UUID
-			if cpAccountUUID != nil {
-				cpId = *cpAccountUUID
+			// The enriched object has its own account_id; do not manufacture uuid.Nil.
+			cpID, parseErr := uuid.Parse(it.Counterparty.AccountID)
+			if parseErr != nil || cpID == uuid.Nil {
+				return nil, fmt.Errorf("ledger response contains invalid counterparty")
 			}
-
+			if cpAccountUUID != nil && *cpAccountUUID != cpID {
+				return nil, fmt.Errorf("ledger response contains inconsistent counterparty")
+			}
 			cp = &openapi.CounterpartyView{
-				AccountId:     cpId,
+				AccountId:     cpID,
 				AccountNumber: it.Counterparty.AccountNumber,
 				DisplayName:   it.Counterparty.DisplayName,
 				AccountType:   it.Counterparty.AccountType,
@@ -314,8 +316,4 @@ func (h *Handler) StatementStrict(
 			XCorrelationId: corrId,
 		},
 	}, nil
-}
-
-func formatMoney(v float64) string {
-	return strconv.FormatFloat(v, 'f', 2, 64)
 }

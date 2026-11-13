@@ -5,9 +5,11 @@ import (
 	"context"
 	"time"
 
-	accountsv1 "github.com/tagoKoder/bff/internal/client/gen/protobuf/bank/accounts/v1"
+	accountsv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/accounts/v1"
 	"github.com/tagoKoder/bff/internal/client/ports"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -16,7 +18,6 @@ var _ ports.AccountsPort = (*AccountsClient)(nil)
 type AccountsClient struct {
 	customers accountsv1.CustomersServiceClient
 	accounts  accountsv1.AccountsServiceClient
-	internal  accountsv1.InternalAccountsServiceClient
 	timeout   time.Duration
 }
 
@@ -24,7 +25,6 @@ func NewAccountsClient(conn *grpc.ClientConn) *AccountsClient {
 	return &AccountsClient{
 		customers: accountsv1.NewCustomersServiceClient(conn),
 		accounts:  accountsv1.NewAccountsServiceClient(conn),
-		internal:  accountsv1.NewInternalAccountsServiceClient(conn),
 		timeout:   5 * time.Second,
 	}
 }
@@ -34,12 +34,14 @@ func (c *AccountsClient) CreateCustomer(ctx context.Context, in ports.CreateCust
 	defer cancel()*/
 
 	req := &accountsv1.CreateCustomerRequest{
-		FullName:    in.FullName,
-		BirthDate:   in.BirthDate,
-		Tin:         in.TIN,
-		RiskSegment: mapRisk(in.RiskSegment),
-		Email:       in.Email,
-		Phone:       in.Phone,
+		FullName:       in.FullName,
+		BirthDate:      in.BirthDate,
+		Tin:            in.TIN,
+		RiskSegment:    mapRisk(in.RiskSegment),
+		Email:          in.Email,
+		Phone:          in.Phone,
+		IdempotencyKey: in.IdempotencyKey,
+		ExternalRef:    ptrString(in.ExternalRef),
 	}
 	if in.Address != nil {
 		req.Address = &accountsv1.CustomerAddressCreate{
@@ -51,7 +53,9 @@ func (c *AccountsClient) CreateCustomer(ctx context.Context, in ports.CreateCust
 			PostalCode: in.Address.PostalCode,
 		}
 	}
-	res, err := c.customers.CreateCustomer(ctx, req)
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	res, err := c.customers.CreateCustomer(ctx2, req)
 	if err != nil {
 		return ports.CreateCustomerOutput{}, err
 	}
@@ -85,7 +89,11 @@ func (c *AccountsClient) PatchCustomer(ctx context.Context, in ports.PatchCustom
 		}
 	}
 
-	res, err := c.customers.PatchCustomer(ctx, req)
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.customers.PatchCustomer(ctx2, req)
 	if err != nil {
 		return ports.PatchCustomerOutput{}, err
 	}
@@ -96,7 +104,11 @@ func (c *AccountsClient) ListAccounts(ctx context.Context, in ports.ListAccounts
 	/*ctx2, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()*/
 
-	res, err := c.accounts.ListAccounts(ctx, &accountsv1.ListAccountsRequest{CustomerId: in.CustomerID})
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.accounts.ListAccounts(ctx2, &accountsv1.ListAccountsRequest{CustomerId: in.CustomerID})
 	if err != nil {
 		return ports.ListAccountsOutput{}, err
 	}
@@ -134,26 +146,36 @@ func (c *AccountsClient) CreateAccount(ctx context.Context, in ports.CreateAccou
 	/*ctx2, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()*/
 
-	res, err := c.accounts.CreateAccount(ctx, &accountsv1.CreateAccountRequest{
-		CustomerId:  in.CustomerID,
-		ProductType: mapProduct(in.ProductType),
-		Currency:    in.Currency,
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.accounts.CreateAccount(ctx2, &accountsv1.CreateAccountRequest{
+		CustomerId:     in.CustomerID,
+		ProductType:    mapProduct(in.ProductType),
+		Currency:       in.Currency,
+		IdempotencyKey: in.IdempotencyKey,
+		ExternalRef:    ptrString(in.ExternalRef),
 	})
 	if err != nil {
 		return ports.CreateAccountOutput{}, err
 	}
-	return ports.CreateAccountOutput{AccountID: res.AccountId}, nil
+	return ports.CreateAccountOutput{AccountID: res.AccountId, AccountNumber: res.AccountNumber}, nil
 }
 
 func (c *AccountsClient) GetAccountBalances(ctx context.Context, in ports.GetAccountBalancesInput) (ports.GetAccountBalancesOutput, error) {
 	/*ctx2, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()*/
 
-	res, err := c.accounts.GetAccountBalances(ctx, &accountsv1.GetAccountBalancesRequest{Id: in.ID})
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.accounts.GetAccountBalances(ctx2, &accountsv1.GetAccountBalancesRequest{Id: in.ID})
 	if err != nil {
 		return ports.GetAccountBalancesOutput{}, err
 	}
-	b := ports.Balances{}
+	b := ports.Balances{Ledger: "0", Available: "0", Hold: "0"}
 	if res.Balances != nil {
 		b = ports.Balances{Ledger: res.Balances.Ledger, Available: res.Balances.Available, Hold: res.Balances.Hold}
 	}
@@ -166,13 +188,17 @@ func (c *AccountsClient) PatchAccountLimits(ctx context.Context, in ports.PatchA
 
 	req := &accountsv1.PatchAccountLimitsRequest{Id: in.ID}
 	if in.DailyOut != nil {
-		req.DailyOut = wrapperspb.Double(*in.DailyOut)
+		req.DailyOut = wrapperspb.String(*in.DailyOut)
 	}
 	if in.DailyIn != nil {
-		req.DailyIn = wrapperspb.Double(*in.DailyIn)
+		req.DailyIn = wrapperspb.String(*in.DailyIn)
 	}
 
-	res, err := c.accounts.PatchAccountLimits(ctx, req)
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.accounts.PatchAccountLimits(ctx2, req)
 	if err != nil {
 		return ports.PatchAccountLimitsOutput{}, err
 	}
@@ -181,67 +207,6 @@ func (c *AccountsClient) PatchAccountLimits(ctx context.Context, in ports.PatchA
 		DailyOut:  res.DailyOut,
 		DailyIn:   res.DailyIn,
 	}, nil
-}
-
-// INTERNAL
-func (c *AccountsClient) ValidateAccountsAndLimits(ctx context.Context, in ports.ValidateAccountsAndLimitsInput) (ports.ValidateAccountsAndLimitsOutput, error) {
-	/*ctx2, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()*/
-
-	res, err := c.internal.ValidateAccountsAndLimits(ctx, &accountsv1.ValidateAccountsAndLimitsRequest{
-		SourceAccountId:      in.SourceAccountID,
-		DestinationAccountId: in.DestinationAccountID,
-		Currency:             in.Currency,
-		Amount:               in.Amount,
-	})
-	if err != nil {
-		return ports.ValidateAccountsAndLimitsOutput{}, err
-	}
-
-	var reason *string
-	if res.Reason != nil {
-		s := res.Reason.Value
-		reason = &s
-	}
-	return ports.ValidateAccountsAndLimitsOutput{OK: res.Ok, Reason: reason}, nil
-}
-
-func (c *AccountsClient) ReserveHold(ctx context.Context, in ports.ReserveHoldInput) (ports.ReserveHoldOutput, error) {
-	/*ctx2, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()*/
-
-	req := &accountsv1.ReserveHoldRequest{
-		Id: in.AccountID,
-		Hold: &accountsv1.HoldRequest{
-			Currency: in.Hold.Currency,
-			Amount:   in.Hold.Amount,
-			Reason:   strWrap(in.Hold.Reason),
-		},
-	}
-	res, err := c.internal.ReserveHold(ctx, req)
-	if err != nil {
-		return ports.ReserveHoldOutput{}, err
-	}
-	return ports.ReserveHoldOutput{OK: res.Ok, NewHold: res.NewHold}, nil
-}
-
-func (c *AccountsClient) ReleaseHold(ctx context.Context, in ports.ReleaseHoldInput) (ports.ReleaseHoldOutput, error) {
-	/*ctx2, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()*/
-
-	req := &accountsv1.ReleaseHoldRequest{
-		Id: in.AccountID,
-		Hold: &accountsv1.HoldRequest{
-			Currency: in.Hold.Currency,
-			Amount:   in.Hold.Amount,
-			Reason:   strWrap(in.Hold.Reason),
-		},
-	}
-	res, err := c.internal.ReleaseHold(ctx, req)
-	if err != nil {
-		return ports.ReleaseHoldOutput{}, err
-	}
-	return ports.ReleaseHoldOutput{OK: res.Ok, NewHold: res.NewHold}, nil
 }
 
 func (c *AccountsClient) GetAccountByNumber(ctx context.Context, in ports.GetAccountByNumberInput) (ports.GetAccountByNumberOutput, error) {
@@ -255,12 +220,16 @@ func (c *AccountsClient) GetAccountByNumber(ctx context.Context, in ports.GetAcc
 		req.IncludeInactive = wrapperspb.Bool(*in.IncludeInactive)
 	}
 
-	res, err := c.accounts.GetAccountByNumber(ctx, req)
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.accounts.GetAccountByNumber(ctx2, req)
 	if err != nil {
 		return ports.GetAccountByNumberOutput{}, err
 	}
 	if res.Account == nil {
-		return ports.GetAccountByNumberOutput{}, err
+		return ports.GetAccountByNumberOutput{}, status.Error(codes.NotFound, "account not found")
 	}
 
 	// product_type es enum => lo pasamos como string consistente con tu OpenAPI
@@ -275,6 +244,7 @@ func (c *AccountsClient) GetAccountByNumber(ctx context.Context, in ports.GetAcc
 	return ports.GetAccountByNumberOutput{
 		Account: ports.AccountLookupView{
 			AccountID:     res.Account.AccountId,
+			CustomerID:    res.Account.CustomerId,
 			AccountNumber: res.Account.AccountNumber,
 			DisplayName:   res.Account.DisplayName,
 			ProductType:   pt,
@@ -347,4 +317,11 @@ func mapProduct(p ports.ProductType) accountsv1.ProductType {
 	default:
 		return accountsv1.ProductType_PRODUCT_TYPE_UNSPECIFIED
 	}
+}
+
+func ptrString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

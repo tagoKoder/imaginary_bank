@@ -1,3 +1,4 @@
+// bff\internal\client\ports\clients.go
 package ports
 
 type Clients struct {

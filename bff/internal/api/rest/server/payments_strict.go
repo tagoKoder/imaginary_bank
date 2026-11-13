@@ -7,13 +7,6 @@ import (
 	openapi "github.com/tagoKoder/bff/internal/api/rest/gen/openapi"
 )
 
-func (s *Server) CreateBeneficiary(
-	ctx context.Context,
-	req openapi.CreateBeneficiaryRequestObject,
-) (openapi.CreateBeneficiaryResponseObject, error) {
-	return s.payments.CreateBeneficiaryStrict(ctx, req.Params, *req.Body)
-}
-
 func (s *Server) ExecutePayment(
 	ctx context.Context,
 	req openapi.ExecutePaymentRequestObject,

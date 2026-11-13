@@ -36,6 +36,8 @@ type Config struct {
 
 	TokenCachePrefix      string
 	TokenCacheSkewSeconds int
+
+	CSRFSecret string
 }
 
 func Load() Config {
@@ -67,6 +69,8 @@ func Load() Config {
 
 		TokenCachePrefix:      getenv("TOKEN_CACHE_PREFIX", "bff:tok:"),
 		TokenCacheSkewSeconds: mustInt(getenv("TOKEN_CACHE_SKEW_SECONDS", "30")),
+
+		CSRFSecret: getenv("CSRF_SECRET", ""),
 	}
 }
 

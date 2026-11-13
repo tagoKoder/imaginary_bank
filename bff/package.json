@@ -2,6 +2,6 @@
   "name": "bank-bff-contracts",
   "private": true,
   "devDependencies": {
-    "@tagokoder/bff-openapi": "0.0.20"
+    "@tagokoder/bff-openapi": "0.0.23"
   }
 }

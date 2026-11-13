@@ -3,7 +3,6 @@ package grpc
 
 import (
 	"context"
-	"log"
 	"strings"
 
 	"github.com/tagoKoder/bff/internal/security"
@@ -66,15 +65,6 @@ func injectOutgoing(ctx context.Context) context.Context {
 func OutgoingHeadersUnaryInterceptor() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = injectOutgoing(ctx)
-
-		if /*debugGRPC &&*/ strings.Contains(method, "bank.accounts.v1.AccountsService/ListAccounts") {
-			md, _ := metadata.FromOutgoingContext(ctx)
-			auth := md.Get(mdAuthorization)
-			present := len(auth) > 0 && auth[0] != ""
-			log.Printf("grpc_out method=%s cid=%s auth_present=%t tokLen=%d",
-				method, security.CorrelationID(ctx), present, len(security.AccessToken(ctx)),
-			)
-		}
 
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}

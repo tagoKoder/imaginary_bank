@@ -29,7 +29,6 @@ type PaymentStep struct {
 type GetPaymentOutput struct {
 	PaymentID            string
 	Status               string
-	IdempotencyKey       string
 	SourceAccountID      string
 	DestinationAccountID string
 	Currency             string
@@ -116,7 +115,5 @@ type LedgerPaymentsPort interface {
 	PostPayment(ctx context.Context, in PostPaymentInput) (PostPaymentOutput, error)
 	GetPayment(ctx context.Context, in GetPaymentInput) (GetPaymentOutput, error)
 
-	CreditAccount(ctx context.Context, in CreditAccountInput) (CreditAccountOutput, error)
-	ListAccountJournalEntries(ctx context.Context, in ListAccountJournalEntriesInput) (ListAccountJournalEntriesOutput, error)
 	ListAccountStatement(ctx context.Context, in ListAccountStatementInput) (ListAccountStatementOutput, error)
 }

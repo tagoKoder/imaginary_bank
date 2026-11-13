@@ -1,3 +1,4 @@
+// bff\internal\client\grpc\identity.go
 package grpc
 
 import (
@@ -5,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	identityv1 "github.com/tagoKoder/bff/internal/client/gen/protobuf/bank/identity/v1"
+	identityv1 "github.com/tagoKoder/bank-contracts/gen/go/bank/identity/v1"
 	"github.com/tagoKoder/bff/internal/client/ports"
 	"google.golang.org/grpc"
 )
@@ -28,7 +29,11 @@ func NewIdentityClient(conn *grpc.ClientConn) *IdentityClient {
 
 func (c *IdentityClient) StartOidcLogin(ctx context.Context, in ports.StartOidcLoginInput) (ports.StartOidcLoginOutput, error) {
 
-	res, err := c.oidc.StartOidcLogin(ctx, &identityv1.StartOidcLoginRequest{
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.oidc.StartOidcLogin(ctx2, &identityv1.StartOidcLoginRequest{
 		Channel:            in.Channel,
 		RedirectAfterLogin: in.RedirectAfterLogin,
 	})
@@ -40,7 +45,11 @@ func (c *IdentityClient) StartOidcLogin(ctx context.Context, in ports.StartOidcL
 
 func (c *IdentityClient) CompleteOidcLogin(ctx context.Context, in ports.CompleteOidcLoginInput) (ports.CompleteOidcLoginOutput, error) {
 
-	res, err := c.oidc.CompleteOidcLogin(ctx, &identityv1.CompleteOidcLoginRequest{
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.oidc.CompleteOidcLogin(ctx2, &identityv1.CompleteOidcLoginRequest{
 		Code:      in.Code,
 		State:     in.State,
 		Ip:        in.IP,
@@ -71,7 +80,11 @@ func (c *IdentityClient) RefreshSession(ctx context.Context, in ports.RefreshSes
 	//ctx2, cancel := context.WithTimeout(ctx, c.timeout)
 	//defer cancel()
 
-	res, err := c.oidc.RefreshSession(ctx, &identityv1.RefreshSessionRequest{
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.oidc.RefreshSession(ctx2, &identityv1.RefreshSessionRequest{
 		SessionId: in.SessionID,
 		Ip:        in.IP,
 		UserAgent: in.UserAgent,
@@ -90,7 +103,11 @@ func (c *IdentityClient) RefreshSession(ctx context.Context, in ports.RefreshSes
 
 func (c *IdentityClient) LogoutSession(ctx context.Context, in ports.LogoutSessionInput) (ports.LogoutSessionOutput, error) {
 
-	res, err := c.oidc.LogoutSession(ctx, &identityv1.LogoutSessionRequest{SessionId: in.SessionID})
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.oidc.LogoutSession(ctx2, &identityv1.LogoutSessionRequest{SessionId: in.SessionID})
 	if err != nil {
 		return ports.LogoutSessionOutput{}, err
 	}
@@ -99,7 +116,11 @@ func (c *IdentityClient) LogoutSession(ctx context.Context, in ports.LogoutSessi
 
 func (c *IdentityClient) GetSessionInfo(ctx context.Context, in ports.GetSessionInfoInput) (ports.GetSessionInfoOutput, error) {
 
-	res, err := c.oidc.GetSessionInfo(ctx, &identityv1.GetSessionInfoRequest{
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.oidc.GetSessionInfo(ctx2, &identityv1.GetSessionInfoRequest{
 		SessionId: in.SessionID,
 		Ip:        in.IP,
 		UserAgent: in.UserAgent,
@@ -145,7 +166,11 @@ func (c *IdentityClient) StartRegistration(ctx context.Context, in ports.StartRe
 		SelfieContentType:   strings.TrimSpace(in.SelfieContentType),
 	}
 
-	res, err := c.onboarding.StartRegistration(ctx, req)
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.onboarding.StartRegistration(ctx2, req)
 	if err != nil {
 		return ports.StartRegistrationOutput{}, err
 	}
@@ -195,7 +220,11 @@ func (c *IdentityClient) ConfirmRegistrationKyc(ctx context.Context, in ports.Co
 		})
 	}
 
-	res, err := c.onboarding.ConfirmRegistrationKyc(ctx, &identityv1.ConfirmRegistrationKycRequest{
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+
+	defer cancel()
+
+	res, err := c.onboarding.ConfirmRegistrationKyc(ctx2, &identityv1.ConfirmRegistrationKycRequest{
 		RegistrationId: in.RegistrationID,
 		Objects:        objs,
 		Channel:        in.Channel,
@@ -229,7 +258,9 @@ func (c *IdentityClient) ConfirmRegistrationKyc(ctx context.Context, in ports.Co
 }
 
 func (c *IdentityClient) ActivateRegistration(ctx context.Context, in ports.ActivateRegistrationInput) (ports.ActivateRegistrationOutput, error) {
-	res, err := c.onboarding.ActivateRegistration(ctx, &identityv1.ActivateRegistrationRequest{
+	ctx2, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	res, err := c.onboarding.ActivateRegistration(ctx2, &identityv1.ActivateRegistrationRequest{
 		RegistrationId: in.RegistrationID,
 		Channel:        in.Channel,
 		FullName:       in.FullName,
@@ -238,10 +269,14 @@ func (c *IdentityClient) ActivateRegistration(ctx context.Context, in ports.Acti
 		Country:        in.Country,
 		Email:          in.Email,
 		Phone:          in.Phone,
-		AcceptedTerms:  *in.AcceptedTerms,
+		AcceptedTerms:  in.AcceptedTerms,
 	})
 	if err != nil {
 		return ports.ActivateRegistrationOutput{}, err
+	}
+	accounts := make([]ports.ActivatedAccount, 0, len(res.Accounts))
+	for _, a := range res.Accounts {
+		accounts = append(accounts, ports.ActivatedAccount{AccountID: a.AccountId, Currency: a.Currency, ProductType: a.ProductType})
 	}
 	return ports.ActivateRegistrationOutput{
 		RegistrationId:   res.RegistrationId,
@@ -249,6 +284,9 @@ func (c *IdentityClient) ActivateRegistration(ctx context.Context, in ports.Acti
 		State:            mapRegStateOut(res.State),
 		PrimaryAccountId: res.PrimaryAccountId,
 		ActivationRef:    res.ActivationRef,
+		Accounts:         accounts,
+		BonusJournalId:   res.BonusJournalId,
+		CorrelationID:    res.CorrelationId,
 	}, nil
 }
 

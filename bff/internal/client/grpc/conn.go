@@ -2,7 +2,6 @@
 package grpc
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -20,19 +19,18 @@ func dial(addr string, cfg config.Config) (*grpc.ClientConn, error) {
 		return nil, err
 	}
 
-	ctx := context.Background()
-	//.WithTimeout(context.Background(), 5*time.Second)
-	//defer cancel()
-
-	opts = append(opts, grpc.WithBlock())
-	return grpc.DialContext(ctx, addr, opts...)
+	// grpc.NewClient is non-blocking; individual RPCs have deadlines.
+	return grpc.NewClient(addr, opts...)
 }
 
 func dialOptions(cfg config.Config) ([]grpc.DialOption, error) {
 	if !cfg.GRPCUseTLS {
+		if cfg.Env != "local" {
+			return nil, fmt.Errorf("insecure gRPC transport refused outside local environment")
+		}
 		return []grpc.DialOption{
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithChainUnaryInterceptor(OutgoingHeadersUnaryInterceptor(), ClientMetadataInterceptor()),
+			grpc.WithChainUnaryInterceptor(OutgoingHeadersUnaryInterceptor()),
 			grpc.WithChainStreamInterceptor(OutgoingHeadersStreamInterceptor()),
 		}, nil
 	}
@@ -61,7 +59,7 @@ func dialOptions(cfg config.Config) ([]grpc.DialOption, error) {
 
 	return []grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
-		grpc.WithChainUnaryInterceptor(OutgoingHeadersUnaryInterceptor(), ClientMetadataInterceptor()),
+		grpc.WithChainUnaryInterceptor(OutgoingHeadersUnaryInterceptor()),
 		grpc.WithChainStreamInterceptor(OutgoingHeadersStreamInterceptor()),
 	}, nil
 }

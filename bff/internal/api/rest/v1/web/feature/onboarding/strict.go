@@ -5,6 +5,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/tagoKoder/bff/internal/util"
+
 	openapi "github.com/tagoKoder/bff/internal/api/rest/gen/openapi"
 	"github.com/tagoKoder/bff/internal/client/ports"
 	"github.com/tagoKoder/bff/internal/security"
@@ -12,10 +14,12 @@ import (
 
 func (h *Handler) StartOnboardingStrict(
 	ctx context.Context,
-	idemKey *string, // si lo hiciste optional en OpenAPI
 	body openapi.OnboardingIntentRequest,
 ) (openapi.StartOnboardingResponseObject, error) {
 	cid := security.CorrelationID(ctx)
+	if err := util.ValidateMoney(body.MonthlyIncome); err != nil {
+		return openapi.StartOnboarding400JSONResponse(openapi.ErrorResponse{Code: "BAD_REQUEST", Message: "invalid monthly_income"}), nil
+	}
 
 	channel := "web"
 	if body.Channel != nil && *body.Channel != "" {
@@ -39,17 +43,13 @@ func (h *Handler) StartOnboardingStrict(
 		NationalID:          body.NationalId,
 		NationalIDIssueDate: body.NationalIdIssueDate,
 		FingerprintCode:     body.FingerprintCode,
-		MonthlyIncome:       float64(body.MonthlyIncome),
+		MonthlyIncome:       body.MonthlyIncome,
 		OccupationType:      string(body.OccupationType),
 		IdFrontContentType:  idCT,
 		SelfieContentType:   selfieCT,
 	})
 	if err != nil {
-		return openapi.StartOnboarding502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "identity service unavailable",
-			Details: &map[string]interface{}{"correlation_id": cid},
-		}), nil
+		return nil, err
 	}
 
 	uploads := make([]openapi.PresignedUpload, 0, len(out.Uploads))
@@ -122,7 +122,6 @@ func (h *Handler) StartOnboardingStrict(
 
 func (h *Handler) ConfirmOnboardingKycStrict(
 	ctx context.Context,
-	idemKey *string,
 	body openapi.ConfirmKycRequest,
 ) (openapi.ConfirmOnboardingKycResponseObject, error) {
 
@@ -165,11 +164,7 @@ func (h *Handler) ConfirmOnboardingKycStrict(
 		Channel:        channel,
 	})
 	if err != nil {
-		return openapi.ConfirmOnboardingKyc502JSONResponse(openapi.ErrorResponse{
-			Code:    "UPSTREAM_ERROR",
-			Message: "identity service unavailable",
-			Details: &map[string]interface{}{"correlation_id": cid},
-		}), nil
+		return nil, err
 	}
 
 	state := openapi.RegistrationState("unspecified")
@@ -242,7 +237,19 @@ func (h *Handler) ActivateOnboardingStrict(
 	body openapi.ActivateRequest,
 ) (openapi.ActivateOnboardingResponseObject, error) {
 	corrId := security.CorrelationID(ctx)
-
+	// The HTTP header has no corresponding Proto field; durable deduplication is
+	// based on registration_id / activation_ref inside Identity, Accounts and Ledger.
+	if len(idemKey) < 8 || len(idemKey) > 128 {
+		return openapi.ActivateOnboarding400JSONResponse(openapi.ErrorResponse{Code: "BAD_REQUEST", Message: "invalid idempotency key"}), nil
+	}
+	if !bool(body.AcceptedTerms) {
+		return openapi.ActivateOnboarding400JSONResponse(
+			openapi.ErrorResponse{
+				Code:    "TERMS_NOT_ACCEPTED",
+				Message: "You must accept the terms and conditions",
+			},
+		), nil
+	}
 	out, err := h.clients.Identity.ActivateRegistration(ctx, ports.ActivateRegistrationInput{
 		//IdempotencyKey: idemKey,
 		RegistrationID: body.RegistrationId,
@@ -252,14 +259,11 @@ func (h *Handler) ActivateOnboardingStrict(
 		Country:        body.Country,
 		Email:          string(body.Email),
 		Phone:          body.Phone,
-		AcceptedTerms:  body.AcceptedTerms,
+		AcceptedTerms:  bool(body.AcceptedTerms),
 		Channel:        "web",
 	})
 	if err != nil {
-		return openapi.ActivateOnboarding502JSONResponse(openapi.ErrorResponse{
-			Code: "UPSTREAM_ERROR", Message: "identity service unavailable",
-			Details: &map[string]interface{}{"correlation_id": corrId},
-		}), nil
+		return nil, err
 	}
 
 	resp := openapi.ActivateResponse{

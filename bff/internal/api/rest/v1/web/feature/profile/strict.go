@@ -1,3 +1,4 @@
+// bff\internal\api\rest\v1\web\feature\profile\strict.go
 package profile
 
 import (
@@ -27,6 +28,9 @@ func (h *Handler) PatchStrict(
 
 	var pref *ports.PreferencesPatch
 	if body.Preferences != nil && len(*body.Preferences) > 0 {
+		if len(*body.Preferences) > 1 {
+			return openapi.UpdateProfile400JSONResponse(openapi.ErrorResponse{Code: "BAD_REQUEST", Message: "only one preference can be updated per request"}), nil
+		}
 		p0 := (*body.Preferences)[0]
 		ch := mapPref(p0.Channel)
 		pref = &ports.PreferencesPatch{
@@ -35,13 +39,17 @@ func (h *Handler) PatchStrict(
 		}
 	}
 
+	var contact *ports.CustomerContactPatch
+	if body.Email != nil || body.Phone != nil {
+		contact = &ports.CustomerContactPatch{Email: body.Email, Phone: body.Phone}
+	}
+	if body.FullName == nil && contact == nil && pref == nil {
+		return openapi.UpdateProfile400JSONResponse(openapi.ErrorResponse{Code: "BAD_REQUEST", Message: "no profile fields provided"}), nil
+	}
 	_, err := h.clients.Accounts.PatchCustomer(ctx, ports.PatchCustomerInput{
-		ID:       customerID,
-		FullName: body.FullName,
-		Contact: &ports.CustomerContactPatch{
-			Email: body.Email,
-			Phone: body.Phone,
-		},
+		ID:          customerID,
+		FullName:    body.FullName,
+		Contact:     contact,
 		Preferences: pref,
 	})
 	if err != nil {

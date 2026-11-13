@@ -88,8 +88,10 @@ func (s *Server) CompleteWebLogin(
 	}
 
 	// Cookie de sesión + CSRF token
+	if _, csrfErr := s.deps.CSRF.IssueForSession(w, out.SessionID); csrfErr != nil {
+		return openapi.CompleteWebLogin502JSONResponse(openapi.ErrorResponse{Code: "INTERNAL", Message: "cannot issue csrf token"}), nil
+	}
 	s.deps.Cookies.Set(w, out.SessionID, out.SessionExpiresIn)
-	_ = s.deps.CSRF.EnsureToken(w, r)
 
 	// Evita cache
 	w.Header().Set("Cache-Control", "no-store")
@@ -125,9 +127,14 @@ func (s *Server) LogoutWebSession(
 		}), nil
 	}
 
-	sid, ok := s.deps.Cookies.ReadSessionID(r)
+	sid, ok := ctx.Value(middleware.CtxSession).(string)
 	if ok && sid != "" {
-		_, _ = s.deps.Clients.Identity.LogoutSession(ctx, ports.LogoutSessionInput{SessionID: sid})
+		out, err := s.deps.Clients.Identity.LogoutSession(ctx, ports.LogoutSessionInput{SessionID: sid})
+		if err != nil || !out.Success {
+			s.deps.Cookies.Clear(w)
+			s.deps.CSRF.Clear(w)
+			return openapi.LogoutWebSession502JSONResponse(openapi.ErrorResponse{Code: "UPSTREAM_ERROR", Message: "session revocation not confirmed"}), nil
+		}
 	}
 
 	s.deps.Cookies.Clear(w)
@@ -164,8 +171,11 @@ func (s *Server) GetWebCsrfToken(
 		}), nil
 	}
 
-	// 1) asegurar cookie
-	if err := s.deps.CSRF.EnsureToken(w, r); err != nil {
+	w.Header().Set("Cache-Control", "no-store")
+	// 1) generar o recuperar el token CSRF de la respuesta
+	sessionID, _ := ctx.Value(middleware.CtxSession).(string)
+	tok, err := s.deps.CSRF.GetOrCreateTokenForSession(w, r, sessionID)
+	if err != nil {
 		return openapi.GetWebCsrfToken502JSONResponse(openapi.ErrorResponse{
 			Code:    "INTERNAL",
 			Message: "cannot issue csrf token",
@@ -173,9 +183,7 @@ func (s *Server) GetWebCsrfToken(
 		}), nil
 	}
 
-	// 2) leerla
-	tok, ok := s.deps.CSRF.ReadToken(r)
-	if !ok || tok == "" {
+	if tok == "" {
 		return openapi.GetWebCsrfToken502JSONResponse(openapi.ErrorResponse{
 			Code:    "INTERNAL",
 			Message: "csrf token missing after issuance",
@@ -217,7 +225,7 @@ func (s *Server) RefreshWebSession(
 		}), nil
 	}
 
-	sid, ok := s.deps.Cookies.ReadSessionID(r)
+	sid, ok := ctx.Value(middleware.CtxSession).(string)
 	if !ok || sid == "" {
 		return openapi.RefreshWebSession401JSONResponse(openapi.ErrorResponse{
 			Code:    "UNAUTHORIZED",
@@ -243,9 +251,11 @@ func (s *Server) RefreshWebSession(
 		}), nil
 	}
 
-	// rota cookie
+	// rota cookie y CSRF vinculado a la nueva session
+	if _, csrfErr := s.deps.CSRF.IssueForSession(w, out.SessionID); csrfErr != nil {
+		return openapi.RefreshWebSession502JSONResponse(openapi.ErrorResponse{Code: "INTERNAL", Message: "cannot issue csrf token"}), nil
+	}
 	s.deps.Cookies.Set(w, out.SessionID, out.SessionExpiresIn)
-	_ = s.deps.CSRF.EnsureToken(w, r)
 	w.Header().Set("Cache-Control", "no-store")
 
 	return openapi.RefreshWebSession200JSONResponse{

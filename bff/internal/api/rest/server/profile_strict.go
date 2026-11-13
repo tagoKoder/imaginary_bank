@@ -1,3 +1,4 @@
+// bff\internal\api\rest\server\profile_strict.go
 package server
 
 import (
